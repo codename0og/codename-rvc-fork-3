@@ -67,6 +67,9 @@ To monitor training or visualize data:
 
 For more detailed instructions, visit the [documentation](https://docs.applio.org).
 
-## Commercial Usage
+## Disclaimer
+``The creators of original Applio repository, Applio's contributors, and the maintainer of this fork (Codename;0) which is built upon Applio are not responsible for any legal issues, damages, or consequences arising from the use of this repository or the generated content from it. By using this fork, you acknowledge that:``
 
-For commercial use, follow the [MIT license](./LICENSE) and contact us at support@applio.org to ensure ethical use. The use of Applio-generated audio files must comply with applicable copyrights. Consider supporting Applio’s development [through a donation](https://ko-fi.com/iahispano).
+- The use of this fork is at your own risk.
+- This repository is intended solely for educational, and experimental purposes.
+- Any misuse, including but not limited to illegal activities or violation of third-party rights, <br/> is not the responsibility of the original creators, contributors, or this fork’s maintainer.
