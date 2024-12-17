@@ -27,9 +27,14 @@
 - Configurable moving average loss for Generator and Discriminator <br/> ( Helps with better judgement on which epoch to choose. )
 
 - Features a different optimizer: Ranger2020 <br/> ( More advanced than stock AdamW. )
+  
+- Support for following vocoders: HiFi-gan, MRF-HiFi-gan, Refine-GAN
+<br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
+<br/>``⚠️ 2: Both MRF-HiFi-GAN and Refine-Gan are experimental and shouldn't be used just yet. ``
+<br/>``⚠️ 3: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
 
 ㅤ
-⚠️ to-do list ⚠️
+✨ to-do list ✨
 > - More / different configurable optimizers.
 > - Adjustable hop length for RMVPE.
 > - Custom initial learning rate per Generator and Discriminator.
@@ -68,8 +73,9 @@ To monitor training or visualize data:
 For more detailed instructions, visit the [documentation](https://docs.applio.org).
 
 ## Disclaimer
-``The creators of original Applio repository, Applio's contributors, and the maintainer of this fork (Codename;0) which is built upon Applio are not responsible for any legal issues, damages, or consequences arising from the use of this repository or the generated content from it. By using this fork, you acknowledge that:``
+``The creators of the original Applio repository, Applio's contributors, and the maintainer of this fork (Codename;0), built upon Applio, are not responsible for any legal issues, damages, or consequences arising from the use of this repository or the content generated from it. By using this fork, you acknowledge that:``
 
 - The use of this fork is at your own risk.
 - This repository is intended solely for educational, and experimental purposes.
 - Any misuse, including but not limited to illegal activities or violation of third-party rights, <br/> is not the responsibility of the original creators, contributors, or this fork’s maintainer.
+- You willingly agree to comply with this repository's [Terms of Use](https://github.com/codename0og/codename-rvc-fork-3/blob/main/TERMS_OF_USE.md)
