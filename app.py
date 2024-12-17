@@ -49,26 +49,19 @@ import assets.installation_checker as installation_checker
 
 installation_checker.check_installation()
 
-# Start Flask server if enabled
-from assets.flask.server import start_flask, load_config_flask
-
-if load_config_flask():
-    print("Starting Flask server")
-    start_flask()
-
 # Load theme
 import assets.themes.loadThemes as loadThemes
 
-my_applio = loadThemes.load_theme() or "ParityError/Interstellar"
+CodenameViolet = loadThemes.load_theme() or "ParityError/Interstellar"
 
 # Define Gradio interface
 with gr.Blocks(
-    theme=my_applio, title="Codename-RVC-Fork 🍇", css="footer{display:none !important}"
+    theme=CodenameViolet, title="Codename-RVC-Fork 🍇", css="footer{display:none !important}"
 ) as Applio:
-    gr.Markdown("# Codename-RVC-Fork 🍇 v3.0")
+    gr.Markdown("# Codename-RVC-Fork 🍇 v3.0.0")
     gr.Markdown(
         i18n(
-            "ㅤㅤBased on Applio ver: 3.2.8"
+            "ㅤㅤBased on Applioㅤㅤ"
         )
     )
     gr.Markdown(
