@@ -442,7 +442,7 @@ def train_tab():
         with gr.Row():
             f0_method = gr.Radio(
                 label=i18n("Pitch extraction algorithm"),
-                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, which is recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCEPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse but is way lighter on hardware. \n\n[ CREPE models have adjustable hop length. ]",
+                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, which is recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCREPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse but is way lighter on hardware. \n\n[ CREPE models have adjustable hop length. ]",
                 choices=["crepe", "crepe-tiny", "rmvpe"],
                 value="rmvpe",
                 interactive=True,
