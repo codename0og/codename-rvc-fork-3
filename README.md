@@ -1,4 +1,4 @@
-# <p align="center">` Codename-RVC-Fork 🍇 v3.0 ` </p>
+# <p align="center">` Codename-RVC-Fork 🍇 3 ` </p>
 ## <p align="center">Based on Applio</p>
 
 <p align="center"> ㅤㅤ👇 Applio's official links below 👇ㅤㅤ </p>
@@ -22,13 +22,17 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Configurable learning-rate warmup <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
+- Configurable learning-rate warmup. <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
 
-- Configurable moving average loss for Generator and Discriminator <br/> ( Helps with better judgement on which epoch to choose. )
+- Configurable moving average loss for Generator ( incl. it's metrics ) and Discriminator. <br/> ( Helps with better judgement on which epoch to choose. )
 
 - Features a different optimizer: Ranger2020 <br/> ( More advanced than stock AdamW. )
   
 - Support for following vocoders: HiFi-gan, MRF-HiFi-gan, Refine-GAN
+
+- Mel spectrogram % similarity metric.
+
+- SoX resampler in place of librosa's default resampling algo.
 <br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
 <br/>``⚠️ 2: Both MRF-HiFi-GAN and Refine-Gan are experimental and shouldn't be used just yet. ``
 <br/>``⚠️ 3: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
@@ -40,7 +44,6 @@
 > - Custom initial learning rate per Generator and Discriminator.
 > - Custom gradient norm value  ( from the ui level )
 > - Ability to delay / headstart the Generator or Discriminator.
-> - Avg for other metrics. ( fm, mel and kl ) 
 > - and more...
 
 ### ❗ For contact, please use AI HUB by Weights discord server ❗
