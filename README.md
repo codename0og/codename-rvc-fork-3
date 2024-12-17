@@ -33,6 +33,7 @@
 - Mel spectrogram % similarity metric.
 
 - SoX resampler in place of librosa's default resampling algo.
+
 <br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
 <br/>``⚠️ 2: Both MRF-HiFi-GAN and Refine-Gan are experimental and shouldn't be used just yet. ``
 <br/>``⚠️ 3: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
