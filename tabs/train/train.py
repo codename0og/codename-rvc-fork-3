@@ -307,7 +307,7 @@ def train_tab():
             label=i18n("Model Name"),
             info=i18n("Name of the new model."),
             choices=get_models_list(),
-            value="example_model_123",
+            value="example-model-name",
             interactive=True,
             allow_custom_value=True,
         )
@@ -728,8 +728,23 @@ def train_tab():
                     interactive=True,
                 )
 
-        with gr.Row():
-            train_output_info = gr.Textbox(
+        def enforce_terms(terms_accepted, *args):
+                if not terms_accepted:
+                    message = "You must agree to the Terms of Use to proceed."
+                    gr.Info(message)
+                    return message
+                return run_train_script(*args)
+
+
+        terms_checkbox = gr.Checkbox(
+            label=i18n("I agree to the terms of use"),
+            info=i18n(
+                "Please ensure compliance with the terms and conditions detailed in [this document](https://github.com/codename0og/codename-rvc-fork-3/blob/main/TERMS_OF_USE.md) before proceeding with your training."
+            ),
+            value=False,
+            interactive=True,
+        )
+        train_output_info = gr.Textbox(
                 label=i18n("Output Information"),
                 info=i18n("The output information will be displayed here."),
                 value="",
@@ -740,8 +755,9 @@ def train_tab():
         with gr.Row():
             train_button = gr.Button(i18n("Start Training"))
             train_button.click(
-                fn=run_train_script,
+                fn=enforce_terms,
                 inputs=[
+                    terms_checkbox,
                     model_name,
                     rvc_version,
                     save_every_epoch,
