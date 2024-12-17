@@ -32,48 +32,28 @@ def save_drop_model(dropbox):
         raise gr.Error(
             message="The file you dropped is not a valid model file. Please try again."
         )
-    else:
-        file_name = format_title(os.path.basename(dropbox))
-        if ".pth" in dropbox:
-            model_name = file_name.split(".pth")[0]
-        elif ".index" in dropbox:
-            if "v1" in dropbox:
-                model_name = (
-                    file_name.split("_nprobe_1_")[1].split("_v1")[0].split(".index")[0]
-                )
-            elif "v2" in dropbox:
-                model_name = (
-                    file_name.split("_nprobe_1_")[1].split("_v2")[0].split(".index")[0]
-                )
-            else:
-                model_name = file_name.split(".index")[0]
-        model_path = os.path.join(now_dir, "logs", model_name)
-        if not os.path.exists(model_path):
-            os.makedirs(model_path)
-        if os.path.exists(os.path.join(model_path, file_name)):
-            os.remove(os.path.join(model_path, file_name))
-        shutil.move(dropbox, os.path.join(model_path, file_name))
-        print(f"{file_name} saved in {model_path}")
-        gr.Info(f"{file_name} saved in {model_path}")
+
+    file_name = format_title(os.path.basename(dropbox))
+    model_name = file_name
+
+    if ".pth" in model_name:
+        model_name = model_name.split(".pth")[0]
+    elif ".index" in model_name:
+        replacements = ["nprobe_1_", "_v1", "_v2", "added_"]
+        for rep in replacements:
+            model_name = model_name.replace(rep, "")
+        model_name = model_name.split(".index")[0]
+
+    model_path = os.path.join(now_dir, "logs", model_name)
+    if not os.path.exists(model_path):
+        os.makedirs(model_path)
+    if os.path.exists(os.path.join(model_path, file_name)):
+        os.remove(os.path.join(model_path, file_name))
+    shutil.move(dropbox, os.path.join(model_path, file_name))
+    print(f"{file_name} saved in {model_path}")
+    gr.Info(f"{file_name} saved in {model_path}")
+
     return None
-
-
-def search_models(name):
-    url = f"https://cjtfqzjfdimgpvpwhzlv.supabase.co/rest/v1/models?name=ilike.%25{name}%25&order=created_at.desc&limit=15"
-    headers = {
-        "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqdGZxempmZGltZ3B2cHdoemx2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjY5MjYxMzQsImV4cCI6MjA0MjUwMjEzNH0.OyDXlhvH6D-IsHiWhPAGUtsPGGUvWQynfxUeQwfYToE"
-    }
-    response = requests.get(url, headers=headers)
-    data = response.json()
-    if len(data) == 0:
-        gr.Info(i18n("We couldn't find models by that name."))
-        return None
-    else:
-        df = pd.DataFrame(data)[["name", "link", "epochs", "type"]]
-        df["link"] = df["link"].apply(
-            lambda x: f'<a href="{x}" target="_blank">{x}</a>'
-        )
-        return df
 
 
 json_url = "https://huggingface.co/IAHispano/Applio/raw/main/pretrains.json"
@@ -214,13 +194,12 @@ def download_tab():
             label="Drag your .pth file and .index file into this space. Drag one and then the other. It'll Copy the files to 'logs/<model_folder>'ㅤ( <model_folder> inherits the name of the .pth file. )",
             type="filepath",
         )
+
         dropbox.upload(
             fn=save_drop_model,
             inputs=[dropbox],
             outputs=[dropbox],
         )
-
-
         gr.Markdown(value=i18n("## Download Pretrained Models"))
         pretrained_model = gr.Dropdown(
             label=i18n("Pretrained"),
