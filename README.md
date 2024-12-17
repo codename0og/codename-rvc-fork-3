@@ -1,5 +1,5 @@
 # <p align="center">` Codename-RVC-Fork 🍇 v3.0 ` </p>
-## <p align="center">Based on Applio:ㅤv3.2.8 </p>
+## <p align="center">Based on Applio</p>
 
 <p align="center"> ㅤㅤ👇 Applio's official links below 👇ㅤㅤ </p>
 
@@ -40,6 +40,7 @@
 > - Custom initial learning rate per Generator and Discriminator.
 > - Custom gradient norm value  ( from the ui level )
 > - Ability to delay / headstart the Generator or Discriminator.
+> - Avg for other metrics. ( fm, mel and kl ) 
 > - and more...
 
 ### ❗ For contact, please use AI HUB by Weights discord server ❗
