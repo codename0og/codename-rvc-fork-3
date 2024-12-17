@@ -631,8 +631,12 @@ def train_and_evaluate(
 
     # Over N mini-batches loss averaging
     N = mini_batches  # Number of mini-batches after which the loss is logged
-    running_loss_gen = 0.0  # Running loss for generator
-    running_loss_disc = 0.0  # Running loss for discriminator
+    # Running loss init
+    running_loss_gen_all = 0.0
+    running_loss_gen_fm = 0.0
+    running_loss_gen_mel = 0.0
+    running_loss_gen_kl = 0.0
+    running_loss_disc_all = 0.0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
@@ -682,7 +686,7 @@ def train_and_evaluate(
                 with autocast(enabled=False):
                     loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-                running_loss_disc += loss_disc.item()  # For Discriminator
+                running_loss_disc_all += loss_disc.item()  # For Discriminator
 
         # Backward and update for discs:
 
@@ -745,18 +749,34 @@ def train_and_evaluate(
 
             global_step += 1
             pbar.update(1)
-        # Accumulate losses for generator and discriminator
-            running_loss_gen += loss_gen_all.item()  # For Generator
+        # Accumulate losses for generator
+            running_loss_gen_all += loss_gen_all.item()  # For Generator - all
+            running_loss_gen_fm += loss_fm.item() # For Generator - FM
+            running_loss_gen_mel += loss_mel.item() # For Generator - MEL
+            running_loss_gen_kl += loss_kl.item() # For Generator - KL
+
 
         # Logging of the averaged loss every N mini-batches
             if rank == 0 and (batch_idx + 1) % N == 0:
-                avg_loss_gen = running_loss_gen / N # For Generator
-                avg_loss_disc = running_loss_disc / N # For Discriminator
-                writer.add_scalar('Loss/Generator_Avg', avg_loss_gen, global_step)
-                writer.add_scalar('Loss/Discriminator_Avg', avg_loss_disc, global_step)
+                # For Generator
+                avg_loss_gen_all = running_loss_gen_all / N
+                avg_loss_gen_fm = running_loss_gen_fm / N
+                avg_loss_gen_mel = running_loss_gen_mel / N
+                avg_loss_gen_kl = running_loss_gen_kl / N
+                # For Discriminator
+                avg_loss_disc_all = running_loss_disc_all / N
+                # Logging
+                writer.add_scalar('Average_Loss/Generator_Avg_Total', avg_loss_gen_all, global_step)
+                writer.add_scalar('Average_Loss/Generator_Avg_FM', avg_loss_gen_fm, global_step)
+                writer.add_scalar('Average_Loss/Generator_Avg_MEL', avg_loss_gen_mel, global_step)
+                writer.add_scalar('Average_Loss/Generator_Avg_KL', avg_loss_gen_kl, global_step)                
+                writer.add_scalar('Average_Loss/Discriminator_Avg_Total', avg_loss_disc_all, global_step)
             # Resets the running loss counters
-                running_loss_gen = 0.0
-                running_loss_disc = 0.0
+                running_loss_gen_all = 0.0
+                running_loss_gen_fm = 0.0
+                running_loss_gen_mel = 0.0
+                running_loss_gen_kl = 0.0
+                running_loss_disc_all = 0.0
 
     # Logging and checkpointing
     if rank == 0:
