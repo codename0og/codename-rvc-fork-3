@@ -75,13 +75,13 @@ install_python_ffmpeg() {
 # Function to create or activate a virtual environment
 prepare_install() {
     if [ -d ".venv" ]; then
-        log_message "Virtual environment found. This implies Applio has been already installed or this is a broken install."
-        printf "Do you want to execute run-applio.sh? (Y/N): " >&2
+        log_message "Virtual environment found. This implies Codename-RVC-Fork has been already installed or this is a broken install."
+        printf "Do you want to execute run-fork.sh? (Y/N): " >&2
         read -r r
         r=$(echo "$r" | tr '[:upper:]' '[:lower:]')
         if [ "$r" = "y" ]; then
-            chmod +x run-applio.sh
-            ./run-applio.sh && exit 0
+            chmod +x run-fork.sh
+            ./run-fork.sh && exit 0
         else
             log_message "Continuing with the installation."
             rm -rf .venv
