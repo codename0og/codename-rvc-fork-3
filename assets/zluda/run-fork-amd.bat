@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Applio
+title Codename-RVC-Fork v3.0
 
 if not exist env (
     echo Please run 'run-install.bat' first to set up the environment.
