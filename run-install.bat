@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
-title Applio Installer
+title Codename-RVC-Fork Installer
 
-echo Welcome to the Applio Installer!
+echo Welcome to the Codename-RVC-Fork Installer!
 echo.
 
 set "INSTALL_DIR=%cd%"
@@ -16,8 +16,8 @@ call :install_miniconda
 call :create_conda_env
 call :install_dependencies
 
-echo Applio has been installed successfully!
-echo To start Applio, please run 'run-applio.bat'.
+echo Codename-RVC-Fork has been installed successfully!
+echo To start Codename-RVC-Fork, please run 'run-fork.bat'.
 echo.
 pause
 exit /b 0
