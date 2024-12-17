@@ -3,8 +3,6 @@
     "file": "CodenameViolet.py",
     "class": "CodenameViolet"
   },
-  "plugins": [],
-  "discord_presence": true,
   "lang": {
     "override": true,
     "selected_lang": "en_US"
