@@ -17,7 +17,6 @@ def settings_tab():
     presence_tab()
     precision_tab()
 #    theme_tab()
-#    version_tab()
 #    lang_tab()
     restart_tab()
     model_author_tab()
