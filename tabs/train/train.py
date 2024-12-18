@@ -702,20 +702,20 @@ def train_tab():
                             interactive=True,
                         )
                 use_avg_running_loss = gr.Checkbox(
-                    label="Average running loss for training",
-                    info="Enables usage of avg running loss for Generator and Discriminator",
+                    label="Customize the average running loss for training",
+                    info="Allows for customization of avg running loss for Generator and Discriminator",
                     value=False,
                     interactive=True,
                 )
                 with gr.Column(visible=False) as avg_running_loss_settings:
-                    with gr.Accordion("Avg running loss settings"):
+                    with gr.Accordion("Tweaks"):
                         n_value_custom = gr.Slider(
-                            1,
+                            0,
                             100000,
                             0,
                             step=1,
-                            label="Frequency of avg running loss",
-                            info="Set the frequency of averaging of the running loss. ( It follows the ' Average every N steps or N mini-batches ' rule )",
+                            label="Frequency",
+                            info="Set the frequency of averaging of the running loss. ( It follows the ' Average every N steps or N mini-batches ' rule ) \n If you're unsure of what to use, try: 15% or 25% of total steps per epoch. \n NOTE: Leaving the value as '0' disables the averaging metric. ( By default it's disabled (( set to '0' ))  ) ",
                             interactive=True,
                         )
                 index_algorithm = gr.Radio(
