@@ -113,7 +113,13 @@ warmup_completed = False
 
 
 # Mel spectrogram similarity metric ( Predicted ∆ Real ) using L1 loss
+
 def mel_spectrogram_similarity(y_hat_mel, y_mel):
+    # Ensure both tensors are on the same device
+    device = y_hat_mel.device
+    y_mel = y_mel.to(device)
+
+    # Trim or pad tensors to the same shape (based on your preference)
     if y_hat_mel.shape != y_mel.shape:
         trimmed_shape = tuple(min(dim_a, dim_b) for dim_a, dim_b in zip(y_hat_mel.shape, y_mel.shape))
         y_hat_mel = y_hat_mel[..., :trimmed_shape[-1]]
@@ -123,16 +129,13 @@ def mel_spectrogram_similarity(y_hat_mel, y_mel):
     loss_mel = F.l1_loss(y_hat_mel, y_mel)
 
     # Convert the L1 loss to a similarity score between 0 and 100
-    # Scale the loss to a percentage, where a perfect match (0 loss) gives 100% similarity
-    mel_spec_similarity = 100.0 - (loss_mel.item() * 100.0)
-
-    # Convert the similarity percentage to a tensor
-    mel_spec_similarity = torch.tensor(mel_spec_similarity)
+    mel_spec_similarity = 100.0 - (loss_mel * 100.0)
 
     # Clip the similarity percentage to ensure it stays within the desired range
-    mel_spec_similarity = torch.clamp(mel_spec_similarity, min=0.0, max=100.0)
+    mel_spec_similarity = mel_spec_similarity.clamp(0.0, 100.0)
 
     return mel_spec_similarity
+
 
 # --------------------------   Custom functions End here   --------------------------
 
@@ -684,9 +687,9 @@ def train_and_evaluate(
             # Run the discriminator:
                 y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
                 with autocast(enabled=False):
-                    loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                    loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g) # loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-                running_loss_disc_all += loss_disc.item()  # For Discriminator
+                running_loss_disc_all += loss_disc #.item()  # For Discriminator
 
         # Backward and update for discs:
 
@@ -750,10 +753,10 @@ def train_and_evaluate(
             global_step += 1
             pbar.update(1)
         # Accumulate losses for generator
-            running_loss_gen_all += loss_gen_all.item()  # For Generator - all
-            running_loss_gen_fm += loss_fm.item() # For Generator - FM
-            running_loss_gen_mel += loss_mel.item() # For Generator - MEL
-            running_loss_gen_kl += loss_kl.item() # For Generator - KL
+            running_loss_gen_all += loss_gen_all #.item()  # For Generator - all
+            running_loss_gen_fm += loss_fm #.item() # For Generator - FM
+            running_loss_gen_mel += loss_mel #.item() # For Generator - MEL
+            running_loss_gen_kl += loss_kl #.item() # For Generator - KL
 
 
         # Logging of the averaged loss every N mini-batches
