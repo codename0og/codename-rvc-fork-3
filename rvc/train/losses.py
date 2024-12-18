@@ -26,17 +26,17 @@ def discriminator_loss(disc_real_outputs, disc_generated_outputs):
         disc_generated_outputs (list of torch.Tensor): List of discriminator outputs for generated samples.
     """
     loss = 0
-    r_losses = []
-    g_losses = []
+    # r_losses = []
+    # g_losses = []
     for dr, dg in zip(disc_real_outputs, disc_generated_outputs):
         r_loss = torch.mean((1 - dr.float()) ** 2)
         g_loss = torch.mean(dg.float() ** 2)
 
-        r_losses.append(r_loss.item())
-        g_losses.append(g_loss.item())
+        # r_losses.append(r_loss.item())
+        # g_losses.append(g_loss.item())
         loss += r_loss + g_loss
 
-    return loss, r_losses, g_losses
+    return loss # , r_losses, g_losses
 
 
 def generator_loss(disc_outputs):
