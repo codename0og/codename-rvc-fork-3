@@ -117,7 +117,6 @@ averaging_enabled = mini_batches > 0 # boolean
 
 
 # Mel spectrogram similarity metric ( Predicted ∆ Real ) using L1 loss
-
 def mel_spectrogram_similarity(y_hat_mel, y_mel):
     # Ensure both tensors are on the same device
     device = y_hat_mel.device
@@ -308,10 +307,15 @@ def run(
         warmup_completed = False
     # Warmup init msg:
     if rank == 0 and warmup_enabled:
-        print(f"//////  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  //////")
+        print(f"||||||  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ||||||")
     # Averaging init msg:
     if rank == 0 and averaging_enabled:
-        print(f"//////  RUNNING AVG LOSS ENABLED: Training will log averaged losses every: {mini_batches} steps.  //////")
+        print(f"||||||  RUNNING AVG LOSS ENABLED: Training will log averaged losses every: {mini_batches} steps.  ||||||")
+
+    if config.train.fp16_run:
+        print(" ||||||  PRECISION: FP16 Mixed Precision  ||||||")
+    else:
+        print("PRECISION: FP32")
 
     if rank == 0:
         writer = SummaryWriter(log_dir=experiment_dir)
@@ -764,10 +768,10 @@ def train_and_evaluate(
  
         # Accumulate losses for generator
             if averaging_enabled:
-                running_loss_gen_all += loss_gen_all #.item()  # For Generator - all
-                running_loss_gen_fm += loss_fm #.item() # For Generator - FM
-                running_loss_gen_mel += loss_mel #.item() # For Generator - MEL
-                running_loss_gen_kl += loss_kl #.item() # For Generator - KL
+                running_loss_gen_all += loss_gen_all
+                running_loss_gen_fm += loss_fm
+                running_loss_gen_mel += loss_mel
+                running_loss_gen_kl += loss_kl
 
 
         # Logging of the averaged loss every N mini-batches
