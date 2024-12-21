@@ -60,6 +60,7 @@ class Synthesizer(torch.nn.Module):
         use_f0: bool,
         text_enc_hidden_dim: int = 768,
         vocoder: str = "HiFi-GAN",
+        checkpointing: bool = False,
         randomized: bool = True,
         **kwargs,
     ):
@@ -111,6 +112,7 @@ class Synthesizer(torch.nn.Module):
                     gin_channels=gin_channels,
                     sr=sr,
                     is_half=kwargs["is_half"],
+                    checkpointing=checkpointing
                 )
         else:
             if vocoder == "MRF HiFi-GAN":
