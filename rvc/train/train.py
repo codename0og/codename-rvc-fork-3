@@ -49,7 +49,7 @@ from utils import (
     load_wav_to_torch,
 )
 
-from losses import discriminator_loss, feature_loss, generator_loss, kl_loss
+from losses import discriminator_loss, feature_loss, generator_loss, kl_loss, envelope_loss
 
 from mel_processing import mel_spectrogram_torch, spec_to_mel_torch, MultiScaleMelSpectrogramLoss
 
@@ -78,7 +78,9 @@ use_warmup = strtobool(sys.argv[14])
 warmup_duration = int(sys.argv[15])
 cleanup = strtobool(sys.argv[16])
 vocoder = sys.argv[17]
-n_value = int(sys.argv[18]) #
+n_value = int(sys.argv[18])
+use_checkpointing = strtobool(sys.argv[19])
+
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
@@ -376,7 +378,8 @@ def run(
         use_f0=pitch_guidance == True,  # converting 1/0 to True/False
         is_half=config.train.fp16_run and device.type == "cuda",
         sr=sample_rate,
-        vocoder=vocoder
+        vocoder=vocoder,
+        checkpointing=use_checkpointing
     ).to(device)
 
 
@@ -647,10 +650,11 @@ def train_and_evaluate(
     # Running loss init
     if averaging_enabled:
         running_loss_gen_all = 0.0
+        running_loss_disc_all = 0.0
         running_loss_gen_fm = 0.0
         running_loss_gen_mel = 0.0
         running_loss_gen_kl = 0.0
-        running_loss_disc_all = 0.0
+        running_loss_gen_env = 0.0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
@@ -741,13 +745,14 @@ def train_and_evaluate(
                 with autocast(enabled=False):
                     loss_fm = feature_loss(fmap_r, fmap_g) # Feature matching loss
 
-                    loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
-                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+                    loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0 # Multi-scale mel spectrogram loss
+                    loss_env = envelope_loss(wave, y_hat) # Envelope Matching Loss
+                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl # Kullback–Leibler divergence
 
                     loss_gen, _ = generator_loss(y_d_hat_g) # Generator's minimax
 
                     # Summed loss of generator:
-                    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+                    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl + loss_env
 
             # Backpropagation and generator optimization
             scaler.scale(loss_gen_all).backward()
@@ -772,29 +777,34 @@ def train_and_evaluate(
                 running_loss_gen_fm += loss_fm
                 running_loss_gen_mel += loss_mel
                 running_loss_gen_kl += loss_kl
+                running_loss_gen_env += loss_env
 
 
         # Logging of the averaged loss every N mini-batches
             if averaging_enabled and rank == 0 and (batch_idx + 1) % N == 0:
-            # For Generator:
                 avg_loss_gen_all = running_loss_gen_all / N
+                avg_loss_disc_all = running_loss_disc_all / N
                 avg_loss_gen_fm = running_loss_gen_fm / N
                 avg_loss_gen_mel = running_loss_gen_mel / N
                 avg_loss_gen_kl = running_loss_gen_kl / N
-            # For Discriminator:
-                avg_loss_disc_all = running_loss_disc_all / N
+                avg_loss_gen_env = running_loss_gen_env / N
             # Logging:
                 writer.add_scalar('Average_Loss/Generator_Avg_Total', avg_loss_gen_all, global_step)
+                writer.add_scalar('Average_Loss/Discriminator_Avg_Total', avg_loss_disc_all, global_step)
                 writer.add_scalar('Average_Loss/Generator_Avg_FM', avg_loss_gen_fm, global_step)
                 writer.add_scalar('Average_Loss/Generator_Avg_MEL', avg_loss_gen_mel, global_step)
-                writer.add_scalar('Average_Loss/Generator_Avg_KL', avg_loss_gen_kl, global_step)                
-                writer.add_scalar('Average_Loss/Discriminator_Avg_Total', avg_loss_disc_all, global_step)
+                writer.add_scalar('Average_Loss/Generator_Avg_KL', avg_loss_gen_kl, global_step)
+                writer.add_scalar('Average_Loss/Generator_Avg_ENV', avg_loss_gen_env, global_step)
             # Resets the running loss counters
                 running_loss_gen_all = 0.0
+                running_loss_disc_all = 0.0
                 running_loss_gen_fm = 0.0
                 running_loss_gen_mel = 0.0
                 running_loss_gen_kl = 0.0
-                running_loss_disc_all = 0.0
+                running_loss_gen_env = 0.0
+
+    with torch.no_grad():
+        torch.cuda.empty_cache()
 
     # Logging and checkpointing
     if rank == 0:
@@ -969,6 +979,9 @@ def train_and_evaluate(
         print(record)
         if done:
             os._exit(2333333)
+
+        with torch.no_grad():
+            torch.cuda.empty_cache()
 
 
 
