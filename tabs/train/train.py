@@ -618,6 +618,12 @@ def train_tab():
                         value=False,
                         interactive=True,
                     )
+                    use_checkpointing = gr.Checkbox(
+                        label="Checkpointing",
+                        info="Enables checkpointing which reduces the vram usage / requirement on cost of the computation / training speed. \n Enable it If you're an user of a 4GB GPU or if you intend to use a bigger batch size than your gpu can handle.",
+                        value=False,
+                        interactive=True,
+                    )
                     pitch_guidance = gr.Checkbox(
                         label=i18n("Pitch Guidance"),
                         info="Pitch guidance allows for mirroring the intonation and pitch of the original voice. \nThis feature is especially useful for cases where: \n- Maintaining the melody or pitch pattern is crucial. \n - The model's primary purpose is to sing.",
@@ -771,6 +777,7 @@ def train_tab():
                     use_warmup,
                     warmup_duration,
                     n_value_custom,
+                    use_checkpointing,
                     pretrained,
                     cleanup,
                     index_algorithm,
