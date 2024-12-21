@@ -506,6 +506,7 @@ def run_train_script(
     use_warmup: bool,
     warmup_duration: int,
     n_value_custom: int,
+    use_checkpointing: bool,
     pretrained: bool,
     cleanup: bool,
     index_algorithm: str = "Auto",
@@ -554,7 +555,8 @@ def run_train_script(
                 warmup_duration,
                 cleanup,
                 vocoder,
-                n_value_custom
+                n_value_custom,
+                use_checkpointing
             ],
         ),
     ]
@@ -2080,6 +2082,13 @@ def parse_arguments():
         default=0,
     )
     train_parser.add_argument(
+        "--use_checkpointing",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Enables usage of checkpointing.",
+        default=False,
+    )
+    train_parser.add_argument(
         "--cleanup",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
@@ -2474,6 +2483,7 @@ def main():
                 pitch_guidance=args.pitch_guidance,
                 use_warmup=args.use_warmup,
                 warmup_duration=args.warmup_duration,
+                use_checkpointing=args.use_checkpointing,
                 pretrained=args.pretrained,
                 custom_pretrained=args.custom_pretrained,
                 cleanup=args.cleanup,
