@@ -395,8 +395,8 @@ def run(
         alpha=0.5,
         k=6,
         N_sma_threshhold=5, # 4 or 5 can be tried
-        use_gc=True,
-        gc_conv_only=True,
+        use_gc=False,
+        gc_conv_only=False,
         gc_loc=False,
     )
     optim_d = Ranger(
@@ -409,8 +409,8 @@ def run(
         alpha=0.5,
         k=6,
         N_sma_threshhold=5, # 4 or 5 can be tried
-        use_gc=True,
-        gc_conv_only=True,
+        use_gc=False,
+        gc_conv_only=False,
         gc_loc=False,
     )
 
