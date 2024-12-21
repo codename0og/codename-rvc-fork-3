@@ -2,6 +2,9 @@ import math
 import torch
 from torch.nn.utils import remove_weight_norm
 from torch.nn.utils.parametrizations import weight_norm
+
+import torch.utils.checkpoint as checkpoint
+
 from typing import Optional
 
 from rvc.lib.algorithm.generators import SineGenerator
@@ -78,9 +81,10 @@ class GeneratorNSF(torch.nn.Module):
         gin_channels: int,
         sr: int,
         is_half: bool = False,
+        checkpointing: bool = False,
     ):
         super(GeneratorNSF, self).__init__()
-
+        self.checkpointing = checkpointing
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_rates)
         self.f0_upsamp = torch.nn.Upsample(scale_factor=math.prod(upsample_rates))
@@ -176,17 +180,27 @@ class GeneratorNSF(torch.nn.Module):
             x += self.cond(g)
 
         for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
-            x = torch.nn.functional.leaky_relu(x, self.lrelu_slope)
-            x = ups(x)
+            x = torch.nn.functional.leaky_relu(x, self.lrelu_slope, inplace=True)
+
+            if self.training and self.checkpointing:
+                x = checkpoint.checkpoint(ups, x, use_reentrant=False)
+            else:
+                x = ups(x)
+
             x += noise_convs(har_source)
 
-            xs = sum(
-                self.resblocks[j](x)
-                for j in range(i * self.num_kernels, (i + 1) * self.num_kernels)
-            )
-            x = xs / self.num_kernels
+            def resblock_forward(x, blocks):
+                return sum(block(x) for block in blocks) / len(blocks)
 
-        x = torch.nn.functional.leaky_relu(x)
+            blocks = self.resblocks[i * self.num_kernels:(i + 1) * self.num_kernels]
+
+            # Checkpoint or regular computation for ResBlocks
+            if self.training and self.checkpointing:
+                x = checkpoint.checkpoint(resblock_forward, x, blocks, use_reentrant=False)
+            else:
+                x = resblock_forward(x, blocks)
+
+        x = torch.nn.functional.leaky_relu(x, inplace=True)
         x = torch.tanh(self.conv_post(x))
 
         return x
