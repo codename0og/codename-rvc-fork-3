@@ -22,6 +22,8 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
+- New loss functions: Multi-scale mel spectrogram loss ( optimized ), Envelope loss
+
 - Configurable learning-rate warmup. <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
 
 - Configurable moving average loss for Generator ( incl. it's metrics ) and Discriminator. <br/> ( Helps with better judgement on which epoch to choose. )
@@ -33,6 +35,8 @@
 - Mel spectrogram % similarity metric.
 
 - SoX resampler in place of librosa's default resampling algo.
+
+- Checkpointing support - Decreases the vram consumption on cost of the computation / training speed.
 
 <br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
 <br/>``⚠️ 2: Both MRF-HiFi-GAN and Refine-Gan are experimental and not yet considered for actual use. ``
