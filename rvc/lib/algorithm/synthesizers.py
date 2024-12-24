@@ -1,9 +1,9 @@
 import torch
 from typing import Optional
-from rvc.lib.algorithm.hifigan import HiFiGAN
-from rvc.lib.algorithm.refinegan import RefineGANGenerator
-from rvc.lib.algorithm.nsf import GeneratorNSF
-from rvc.lib.algorithm.generators import Generator
+from rvc.lib.algorithm.generators.hifigan_mrf import HiFiGANMRFGenerator
+from rvc.lib.algorithm.generators.hifigan_nsf import HiFiGANNSFGenerator
+from rvc.lib.algorithm.generators.hifigan import HiFiGANGenerator
+from rvc.lib.algorithm.generators.refinegan import RefineGANGenerator
 from rvc.lib.algorithm.commons import slice_segments, rand_slice_segments
 from rvc.lib.algorithm.residuals import ResidualCouplingBlock
 from rvc.lib.algorithm.encoders import TextEncoder, PosteriorEncoder
@@ -60,14 +60,14 @@ class Synthesizer(torch.nn.Module):
         use_f0: bool,
         text_enc_hidden_dim: int = 768,
         vocoder: str = "HiFi-GAN",
-        checkpointing: bool = False,
         randomized: bool = True,
+        checkpointing: bool = False,
         **kwargs,
     ):
         super().__init__()
         self.segment_size = segment_size
         self.use_f0 = use_f0
-        self.randomized = randomized	
+        self.randomized = randomized
 
         self.enc_p = TextEncoder(
             inter_channels,
@@ -83,7 +83,7 @@ class Synthesizer(torch.nn.Module):
         print(f"Using {vocoder} vocoder")
         if use_f0:
             if vocoder == "MRF HiFi-GAN":
-                self.dec = HiFiGAN(
+                self.dec = HiFiGANMRFGenerator(
                     in_channel=inter_channels,
                     upsample_initial_channel=upsample_initial_channel,
                     upsample_rates=upsample_rates,
@@ -93,16 +93,19 @@ class Synthesizer(torch.nn.Module):
                     gin_channels=gin_channels,
                     sample_rate=sr,
                     harmonic_num=8,
+                    checkpointing=checkpointing,
                 )
             elif vocoder == "RefineGAN":
                 self.dec = RefineGANGenerator(
-                    sample_rate = sr,
+                    sample_rate=sr,
                     downsample_rates=upsample_rates[::-1],
                     upsample_rates=upsample_rates,
                     start_channels=16,
-                    num_mels=inter_channels)
+                    num_mels=inter_channels,
+                    checkpointing=checkpointing,
+                )
             else:
-                self.dec = GeneratorNSF(
+                self.dec = HiFiGANNSFGenerator(
                     inter_channels,
                     resblock_kernel_sizes,
                     resblock_dilation_sizes,
@@ -112,7 +115,7 @@ class Synthesizer(torch.nn.Module):
                     gin_channels=gin_channels,
                     sr=sr,
                     is_half=kwargs["is_half"],
-                    checkpointing=checkpointing
+                    checkpointing=checkpointing,
                 )
         else:
             if vocoder == "MRF HiFi-GAN":
@@ -122,7 +125,7 @@ class Synthesizer(torch.nn.Module):
                 print("RefineGAN does not support training without pitch guidance.")
                 self.dec = None
             else:
-                self.dec = Generator(
+                self.dec = HiFiGANGenerator(
                     inter_channels,
                     resblock_kernel_sizes,
                     resblock_dilation_sizes,
@@ -130,6 +133,7 @@ class Synthesizer(torch.nn.Module):
                     upsample_initial_channel,
                     upsample_kernel_sizes,
                     gin_channels=gin_channels,
+                    checkpointing=checkpointing
                 )
         self.enc_q = PosteriorEncoder(
             spec_channels,
@@ -195,7 +199,9 @@ class Synthesizer(torch.nn.Module):
             z_p = self.flow(z, y_mask, g=g)
             # regular old training method using random slices
             if self.randomized:
-                z_slice, ids_slice = rand_slice_segments(z, y_lengths, self.segment_size)
+                z_slice, ids_slice = rand_slice_segments(
+                    z, y_lengths, self.segment_size
+                )
                 if self.use_f0:
                     pitchf = slice_segments(pitchf, ids_slice, self.segment_size, 2)
                     o = self.dec(z_slice, pitchf, g=g)
@@ -207,7 +213,7 @@ class Synthesizer(torch.nn.Module):
                 if self.use_f0:
                     o = self.dec(z, pitchf, g=g)
                 else:
-                    o = self.dec(z, g=g)            
+                    o = self.dec(z, g=g)
                 return o, None, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
         else:
             return None, None, x_mask, None, (None, None, m_p, logs_p, None, None)
