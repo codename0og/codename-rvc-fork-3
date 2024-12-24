@@ -70,16 +70,15 @@ version = sys.argv[6]
 gpus = sys.argv[7]
 batch_size = int(sys.argv[8])
 sample_rate = int(sys.argv[9])
-pitch_guidance = strtobool(sys.argv[10])
-save_only_latest = strtobool(sys.argv[11])
-save_every_weights = strtobool(sys.argv[12])
-cache_data_in_gpu = strtobool(sys.argv[13])
-use_warmup = strtobool(sys.argv[14])
-warmup_duration = int(sys.argv[15])
-cleanup = strtobool(sys.argv[16])
-vocoder = sys.argv[17]
-n_value = int(sys.argv[18])
-use_checkpointing = strtobool(sys.argv[19])
+save_only_latest = strtobool(sys.argv[10])
+save_every_weights = strtobool(sys.argv[11])
+cache_data_in_gpu = strtobool(sys.argv[12])
+use_warmup = strtobool(sys.argv[13])
+warmup_duration = int(sys.argv[14])
+cleanup = strtobool(sys.argv[15])
+vocoder = sys.argv[16]
+n_value = int(sys.argv[17])
+use_checkpointing = strtobool(sys.argv[18])
 
 
 current_dir = os.getcwd()
@@ -227,7 +226,6 @@ def main():
                         experiment_dir,
                         pretrainG,
                         pretrainD,
-                        pitch_guidance,
                         total_epoch,
                         save_every_weights,
                         config,
@@ -281,7 +279,6 @@ def run(
     experiment_dir,
     pretrainG,
     pretrainD,
-    pitch_guidance,
     custom_total_epoch,
     custom_save_every_weights,
     config,
@@ -296,7 +293,6 @@ def run(
         experiment_dir (str): The directory where experiment logs and checkpoints will be saved.
         pretrainG (str): Path to the pre-trained generator model.
         pretrainD (str): Path to the pre-trained discriminator model.
-        pitch_guidance (bool): Flag indicating whether to use pitch guidance during training.
         custom_total_epoch (int): The total number of epochs for training.
         custom_save_every_weights (int): The interval (in epochs) at which to save model weights.
         config (object): Configuration object containing training parameters.
@@ -320,10 +316,9 @@ def run(
         print("PRECISION: FP32")
 
     if rank == 0:
-        writer = SummaryWriter(log_dir=experiment_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
     else:
-        writer, writer_eval = None, None
+        writer_eval = None
 
     dist.init_process_group(
         backend="gloo", #"nccl",
@@ -375,7 +370,7 @@ def run(
         config.data.filter_length // 2 + 1,
         config.train.segment_size // config.data.hop_length,
         **config.model,
-        use_f0=pitch_guidance == True,  # converting 1/0 to True/False
+        use_f0=True,
         is_half=config.train.fp16_run and device.type == "cuda",
         sr=sample_rate,
         vocoder=vocoder,
@@ -383,7 +378,7 @@ def run(
     ).to(device)
 
 
-    net_d = MultiPeriodDiscriminator(config.model.use_spectral_norm).to(device)
+    net_d = MultiPeriodDiscriminator(config.model.use_spectral_norm, use_checkpointing).to(device)
 
     optim_g = Ranger(
         net_g.parameters(),
@@ -529,8 +524,8 @@ def run(
         reference = (
             phone,
             phone_lengths,
-            pitch if pitch_guidance else None,
-            pitchf if pitch_guidance else None,
+            pitch,
+            pitchf,
             sid,
         )
     else:
@@ -539,8 +534,8 @@ def run(
             reference = (
                 phone.to(device),
                 phone_lengths.to(device),
-                pitch.to(device) if pitch_guidance else None,
-                pitchf.to(device) if pitch_guidance else None,
+                pitch.to(device),
+                pitchf.to(device),
                 sid.to(device),
             )
             break
@@ -554,7 +549,7 @@ def run(
             [optim_g, optim_d],
             scaler,
             [train_loader, None],
-            [writer, writer_eval],
+            [writer_eval],
             cache,
             custom_save_every_weights,
             custom_total_epoch,
@@ -675,8 +670,6 @@ def train_and_evaluate(
                 wave_lengths,
                 sid,
             ) = info
-            pitch = pitch if pitch_guidance else None
-            pitchf = pitchf if pitch_guidance else None
 
             # Forward pass
             use_amp = config.train.fp16_run and device.type == "cuda"
@@ -966,7 +959,7 @@ def train_and_evaluate(
                     extract_model(
                         ckpt=ckpt,
                         sr=sample_rate,
-                        pitch_guidance=pitch_guidance== True,  # converting 1/0 to True/False,
+                        pitch_guidance=True,
                         name=model_name,
                         model_dir=m,
                         epoch=epoch,
