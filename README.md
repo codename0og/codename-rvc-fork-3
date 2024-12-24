@@ -26,7 +26,7 @@
 
 - Configurable learning-rate warmup. <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
 
-- Configurable moving average loss for Generator ( incl. it's metrics ) and Discriminator. <br/> ( Helps with better judgement on which epoch to choose. )
+- Configurable moving average loss for Generator and Discriminator. <br/> ( Helps with better judgement on which epoch to choose. )
 
 - Features a different optimizer: Ranger2020 <br/> ( More advanced than stock AdamW. )
   
@@ -36,7 +36,7 @@
 
 - SoX resampler in "VHQ" mode used by default in place of "soxr_medium" or "kaiser_best" ( fallback. ).
 
-- Checkpointing support for both Gen. and Disc. - Decreases the vram consumption on cost of the computation / training speed.
+- Checkpointing and in-place support for both Gen. and Disc. <br/> ( Decreases the vram consumption on cost of the computation / training speed. )
 
 - Customization for preprocessing workflow ( Including 'mute' files usage. )
 
