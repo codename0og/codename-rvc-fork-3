@@ -21,7 +21,6 @@ import logging
 
 logging.getLogger("faiss").setLevel(logging.WARNING)
 
-# Constants for high-pass filter
 FILTER_ORDER = 5
 CUTOFF_FREQUENCY = 48  # Hz
 SAMPLE_RATE = 16000  # Hz
@@ -43,7 +42,7 @@ class AudioProcessor:
         target_audio: np.ndarray,
         target_rate: int,
         rate: float,
-    ) -> np.ndarray:
+    ):
         """
         Adjust the RMS level of target_audio to match the RMS of source_audio, with a given blending rate.
 
@@ -486,7 +485,7 @@ class Pipeline:
                 pitch, pitchf = None, None
             p_len = torch.tensor([p_len], device=self.device).long()
             audio1 = (
-                (net_g.infer(feats, p_len, pitch, pitchf, sid)[0][0, 0])
+                (net_g.infer(feats.float(), p_len, pitch, pitchf.float(), sid)[0][0, 0])
                 .data.cpu()
                 .float()
                 .numpy()
