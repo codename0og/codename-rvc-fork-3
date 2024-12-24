@@ -421,10 +421,12 @@ def run_preprocess_script(
     dataset_path: str,
     sample_rate: int,
     cpu_cores: int,
-    cut_preprocess: bool,
+    cut_preprocess: str,
     process_effects: bool,
     noise_reduction: bool,
     clean_strength: float,
+    chunk_len: float,
+    overlap_len: float,
 ):
     config = get_config()
     per = 3.0 if config.is_half else 3.7
@@ -444,6 +446,8 @@ def run_preprocess_script(
                 process_effects,
                 noise_reduction,
                 clean_strength,
+                chunk_len,
+                overlap_len,
             ],
         ),
     ]
@@ -462,6 +466,7 @@ def run_extract_script(
     sample_rate: int,
     embedder_model: str,
     embedder_model_custom: str = None,
+    include_mutes: int = 2,
 ):
 
     model_path = os.path.join(logs_path, model_name)
@@ -482,6 +487,7 @@ def run_extract_script(
                 sample_rate,
                 embedder_model,
                 embedder_model_custom,
+                include_mutes
             ],
         ),
     ]
@@ -502,7 +508,6 @@ def run_train_script(
     sample_rate: int,
     batch_size: int,
     gpu: int,
-    pitch_guidance: bool,
     use_warmup: bool,
     warmup_duration: int,
     n_value_custom: int,
@@ -521,7 +526,7 @@ def run_train_script(
         from rvc.lib.tools.pretrained_selector import pretrained_selector
 
         if custom_pretrained == False:
-            pg, pd = pretrained_selector(str(rvc_version), str(vocoder), bool(pitch_guidance), int(sample_rate))
+            pg, pd = pretrained_selector(str(rvc_version), str(vocoder), True, int(sample_rate))
         else:
             if g_pretrained_path is None or d_pretrained_path is None:
                 raise ValueError(
@@ -547,7 +552,6 @@ def run_train_script(
                 gpu,
                 batch_size,
                 sample_rate,
-                pitch_guidance,
                 save_only_latest,
                 save_every_weights,
                 cache_data_in_gpu,
@@ -1855,11 +1859,11 @@ def parse_arguments():
     )
     preprocess_parser.add_argument(
         "--cut_preprocess",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
+        type=str,
+        choices=['Skip', 'Simple', 'Automatic'],
         help="Cut the dataset into smaller segments for faster preprocessing.",
-        default=True,
-        required=False,
+        default='Automatic',
+        required=True,
     )
     preprocess_parser.add_argument(
         "--process_effects",
@@ -1885,6 +1889,22 @@ def parse_arguments():
         default=0.7,
         required=False,
     )
+    preprocess_parser.add_argument(
+        "--chunk_len",
+        type=float,
+        help="Chunk length.",
+        choices=[i * 0.5 for i in range(1, 11)],
+        default=3.0,
+        required=False,
+    )
+    preprocess_parser.add_argument(
+        "--overlap_len",
+        type=float,
+        help="Overlap length.",
+        choices=[0.0, 0.1, 0.2, 0.3, 0.4],
+        default=0.3,
+        required=False,
+    )    
 
     # Parser for 'extract' mode
     extract_parser = subparsers.add_parser(
@@ -1957,6 +1977,14 @@ def parse_arguments():
         help=embedder_model_custom_description,
         default=None,
     )
+    extract_parser.add_argument(
+        "--include_mutes",
+        type=int,
+        help="Number of silent files to include.",
+        choices=range(0, 11),
+        default=2,
+        required=True
+    )    
 
     # Parser for 'train' mode
     train_parser = subparsers.add_parser("train", help="Train an RVC model.")
@@ -2024,13 +2052,6 @@ def parse_arguments():
         type=str,
         help="GPU device to use for training (e.g., '0').",
         default="0",
-    )
-    train_parser.add_argument(
-        "--pitch_guidance",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        help="Enable or disable pitch guidance during training.",
-        default=True,
     )
     train_parser.add_argument(
         "--pretrained",
@@ -2456,6 +2477,8 @@ def main():
                 process_effects=args.process_effects,
                 noise_reduction=args.noise_reduction,
                 clean_strength=args.noise_reduction_strength,
+                chunk_len=args.chunk_len,
+                overlap_len=args.overlap_len,
             )
         elif args.mode == "extract":
             run_extract_script(
@@ -2468,6 +2491,7 @@ def main():
                 sample_rate=args.sample_rate,
                 embedder_model=args.embedder_model,
                 embedder_model_custom=args.embedder_model_custom,
+                include_mutes=args.include_mutes,
             )
         elif args.mode == "train":
             run_train_script(
@@ -2480,10 +2504,8 @@ def main():
                 sample_rate=args.sample_rate,
                 batch_size=args.batch_size,
                 gpu=args.gpu,
-                pitch_guidance=args.pitch_guidance,
                 use_warmup=args.use_warmup,
                 warmup_duration=args.warmup_duration,
-                use_checkpointing=args.use_checkpointing,
                 pretrained=args.pretrained,
                 custom_pretrained=args.custom_pretrained,
                 cleanup=args.cleanup,
@@ -2493,6 +2515,7 @@ def main():
                 d_pretrained_path=args.d_pretrained_path,
                 vocoder=args.vocoder,
                 n_value_custom=args.n_value_custom,
+                use_checkpointing=args.use_checkpointing,
             )
         elif args.mode == "index":
             run_index_script(
