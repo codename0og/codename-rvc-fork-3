@@ -34,13 +34,14 @@
 
 - Mel spectrogram % similarity metric.
 
-- SoX resampler in place of librosa's default resampling algo.
+- SoX resampler in "VHQ" mode used by default in place of "soxr_medium" or "kaiser_best" ( fallback. ).
 
-- Checkpointing support - Decreases the vram consumption on cost of the computation / training speed.
+- Checkpointing support for both Gen. and Disc. - Decreases the vram consumption on cost of the computation / training speed.
+
+- Customization for preprocessing workflow ( Including 'mute' files usage. )
 
 <br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
-<br/>``⚠️ 2: Both MRF-HiFi-GAN and Refine-Gan are experimental and not yet considered for actual use. ``
-<br/>``⚠️ 3: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
+<br/>``⚠️ 2: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
 
 ㅤ
 ✨ to-do list ✨
