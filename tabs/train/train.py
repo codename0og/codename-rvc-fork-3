@@ -314,12 +314,16 @@ def train_tab():
                     interactive=True,
                     allow_custom_value=True,
                 )
-                experimental_options = gr.Checkbox(
-                    label="Enable Experimental Options",
-                    info="Enables trial/experimental features such as 44.1khz sample rate and vocoder selection. \n Experimental things can fail or error out so proceed with caution. \n Don't touch anything unless you know what you're doing.",
-                    value=False,
+                architecture = gr.Radio(
+                    label=i18n("Architecture"),
+                    info=i18n(
+                        "Choose the model architecture:\n- **RVC (V2)**: Default - OG, Compatible with all clients.\n- **Fork/Applio**: Experimental - Improved vocoders, only for this Fork or Applio."
+                    ),
+                    choices=["RVC", "Fork/Applio"],
+                    value="RVC",
+                    interactive=True,
+                    visible=True,
                 )
-
             with gr.Column():
                 sampling_rate = gr.Radio(
                     label=i18n("Sampling Rate"),
@@ -333,8 +337,8 @@ def train_tab():
                     info="Vocoder for audio synthesis: \n- HiFi-GAN \n( Default; Works with all clients incl. mainline RVC ) \n\n- MRF HiFi-GAN \n( Higher fidelity; Compatible only with this fork or Applio). \n\n- RefineGAN \n( Highest fidelity; Compatible only with this fork or Applio )",
                     choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"],
                     value="HiFi-GAN",
-                    interactive=True,
-                    visible=False,
+                    interactive=False,
+                    visible=True,
                 )
                 rvc_version = gr.Radio(
                     label=i18n("Model Architecture"),
@@ -497,7 +501,7 @@ def train_tab():
         with gr.Row():
             f0_method = gr.Radio(
                 label=i18n("Pitch extraction algorithm"),
-                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, which is recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCREPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse but is way lighter on hardware. \n\n[ CREPE models have adjustable hop length. ]",
+                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCREPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse but is way lighter on hardware. \n\n[ CREPE models have adjustable hop length. ]",
                 choices=["crepe", "crepe-tiny", "rmvpe"],
                 value="rmvpe",
                 interactive=True,
@@ -732,23 +736,6 @@ def train_tab():
                             info="Set the maximum number of epochs you want the warmup phase to last for. For small datasets you can try anywhere from 2 to 10. Alternatively, follow the ' 5–10% of the total epochs ' rule ",
                             interactive=True,
                         )
-                use_avg_running_loss = gr.Checkbox(
-                    label="Customize the average running loss for training",
-                    info="Allows for customization of avg running loss for Generator and Discriminator",
-                    value=False,
-                    interactive=True,
-                )
-                with gr.Column(visible=False) as avg_running_loss_settings:
-                    with gr.Accordion("Tweaks"):
-                        n_value_custom = gr.Slider(
-                            0,
-                            100000,
-                            0,
-                            step=1,
-                            label="Frequency",
-                            info="Set the frequency of averaging of the running loss. ( It follows the ' Average every N steps or N mini-batches ' rule ) \n If you're unsure of what to use, try: 15% or 25% of total steps per epoch. \n NOTE: Leaving the value as '0' disables the averaging metric. ( By default it's disabled (( set to '0' ))  ) ",
-                            interactive=True,
-                        )
                 index_algorithm = gr.Radio(
                     label=i18n("Index Algorithm"),
                     info=i18n(
@@ -799,8 +786,6 @@ def train_tab():
                     gpu,
                     use_warmup,
                     warmup_duration,
-                    n_value_custom,
-                    use_checkpointing,
                     pretrained,
                     cleanup,
                     index_algorithm,
@@ -809,6 +794,7 @@ def train_tab():
                     g_pretrained_path,
                     d_pretrained_path,
                     vocoder,
+                    use_checkpointing,
                 ],
                 outputs=[train_output_info],
             )
@@ -832,7 +818,7 @@ def train_tab():
         if not os.name == "nt":
             gr.Markdown(
                 i18n(
-                    "The button 'Upload' is only for google colab: Uploads the exported files to the ApplioExported folder in your Google Drive."
+                    "The button 'Upload' is only for google colab: Uploads the exported files to the ForkExported folder in your Google Drive."
                 )
             )
         with gr.Row():
@@ -944,16 +930,21 @@ def train_tab():
                     return {"visible": True, "__type__": "update"}
                 return {"visible": False, "__type__": "update"}
 
-            def toggle_experimental(enabled):
-                if enabled:
+            def toggle_architecture(architecture):
+                if architecture == "Fork/Applio":
                     return {
                         "choices": ["32000", "40000", "44100", "48000"],
                         "__type__": "update",
-                    }, {"visible": True, "__type__": "update"}
-                return {"choices": ["32000", "40000", "48000"], "__type__": "update"}, {
-                    "visible": False,
-                    "__type__": "update",
-                }
+                    }, {
+                        "interactive": True,
+                        "__type__": "update",
+                    }
+                else:
+                    return {
+                        "choices": ["32000", "40000", "48000"],
+                        "__type__": "update",
+                        "value": "40000",
+                    }, {"interactive": False, "__type__": "update", "value": "HiFi-GAN"}
 
             def update_slider_visibility(noise_reduction):
                 return gr.update(visible=noise_reduction)
@@ -968,9 +959,9 @@ def train_tab():
                 inputs=[rvc_version],
                 outputs=[],
             )
-            experimental_options.change(
-                fn=toggle_experimental,
-                inputs=[experimental_options],
+            architecture.change(
+                fn=toggle_architecture,
+                inputs=[architecture],
                 outputs=[sampling_rate, vocoder],
             )
             refresh.click(
@@ -1035,12 +1026,6 @@ def train_tab():
                 fn=toggle_visible,
                 inputs=[use_warmup],
                 outputs=[warmup_settings],
-            )
-
-            use_avg_running_loss.change(
-                fn=toggle_visible,
-                inputs=[use_avg_running_loss],
-                outputs=[avg_running_loss_settings],
             )
             multiple_gpu.change(
                 fn=toggle_visible,
