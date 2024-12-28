@@ -26,11 +26,11 @@
 
 - Configurable learning-rate warmup. <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
 
-- Configurable moving average loss for Generator and Discriminator. <br/> ( Helps with better judgement on which epoch to choose. )
+- New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 5 epochs to evaluate general trends and the model's performance over time. <br/>` Both work for each metric individually. `
 
-- Features a different optimizer: Ranger2020 <br/> ( More advanced than stock AdamW. )
+- Features a different optimizer: RAdam ( Rectified Adam ) <br/> ( More init. stability and compared to AdamW, doesn't require using / configuring warmup. ) <br/> ` Most likely better convergence / generalization on average, compared to plain AdamW without a warmup.   `
   
-- Support for following vocoders: HiFi-gan, MRF-HiFi-gan, Refine-GAN
+- Support for following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN.
 
 - Mel spectrogram % similarity metric.
 
@@ -38,17 +38,16 @@
 
 - Checkpointing and in-place support for both Gen. and Disc. <br/> ( Decreases the vram consumption on cost of the computation / training speed. )
 
-- Customization for preprocessing workflow ( Including 'mute' files usage. )
+- Customization for preprocessing workflow ( Including 'mute' files usage and various slicing methods. )
 
 <br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
 <br/>``⚠️ 2: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
 
 ㅤ
 ✨ to-do list ✨
-> - More / different configurable optimizers.
+> - Ability to switch back to AdamW optimizer ` ( In case someone wants to try it with a warmup. ) `
 > - Adjustable hop length for RMVPE.
-> - Custom initial learning rate per Generator and Discriminator.
-> - Custom gradient norm value  ( from the ui level )
+> - Custom initial learning rate per Generator and Discriminator. ` ( Not 100% sure about that just yet. ) ` 
 > - Ability to delay / headstart the Generator or Discriminator.
 > - and more...
 
