@@ -32,7 +32,6 @@ import torch.multiprocessing as mp
 #from accelerate import Accelerator # WIP.
 
 # Custom optimizers:
-from custom_optimizers.ranger import Ranger
 now_dir = os.getcwd()
 sys.path.append(os.path.join(now_dir))
 
@@ -49,16 +48,22 @@ from utils import (
     load_wav_to_torch,
 )
 
-from losses import discriminator_loss, feature_loss, generator_loss, kl_loss, envelope_loss
-
-from mel_processing import mel_spectrogram_torch, spec_to_mel_torch, MultiScaleMelSpectrogramLoss
+from losses import (
+    discriminator_loss,
+    feature_loss,
+    generator_loss,
+    kl_loss,
+    envelope_loss,
+)
+from mel_processing import (
+    mel_spectrogram_torch,
+    spec_to_mel_torch,
+    MultiScaleMelSpectrogramLoss,
+)
 
 from rvc.train.process.extract_model import extract_model
+
 from rvc.lib.algorithm import commons
-
-# MultiPeriodDiscriminatorV2 ( Original Discriminator - A must have. )
-#from rvc.lib.algorithm.discriminators import MultiPeriodDiscriminator
-
 
 # Parse command line arguments
 model_name = sys.argv[1]
@@ -77,9 +82,7 @@ use_warmup = strtobool(sys.argv[13])
 warmup_duration = int(sys.argv[14])
 cleanup = strtobool(sys.argv[15])
 vocoder = sys.argv[16]
-n_value = int(sys.argv[17])
-use_checkpointing = strtobool(sys.argv[18])
-
+use_checkpointing = strtobool(sys.argv[17])
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
@@ -88,30 +91,26 @@ dataset_path = os.path.join(experiment_dir, "sliced_audios")
 
 with open(config_save_path, "r") as f:
     config = json.load(f)
-
 config = HParams(**config)
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
-# for nVidia's CUDA device selection can be done from command line / UI
+# for Nvidia's CUDA device selection can be done from command line / UI
 # for AMD the device selection can only be done from .bat file using HIP_VISIBLE_DEVICES
 os.environ["CUDA_VISIBLE_DEVICES"] = gpus.replace("-", ",")
 
 # Torch backends config
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = True
 
 # Globals
 global_step = 0
-
-mini_batches = n_value
 
 warmup_epochs = warmup_duration
 warmup_enabled = use_warmup
 warmup_completed = False
 
-averaging_enabled = mini_batches > 0 # boolean
 
 
 # --------------------------   Custom functions land in here   --------------------------
@@ -170,6 +169,25 @@ class EpochRecorder:
         elapsed_time_str = str(datetime.timedelta(seconds=int(elapsed_time)))
         current_time = datetime.datetime.now().strftime("%H:%M:%S")
         return f"Current time: {current_time} | Time per epoch: {elapsed_time_str}"
+
+
+def verify_checkpoint_shapes(checkpoint_path, model):
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint_state_dict = checkpoint["model"]
+    try:
+        if hasattr(model, "module"):
+            model_state_dict = model.module.load_state_dict(checkpoint_state_dict)
+        else:
+            model_state_dict = model.load_state_dict(checkpoint_state_dict)
+    except RuntimeError:
+        print(
+            "The parameters of the pretrain model such as the sample rate or architecture do not match the selected model."
+        )
+        sys.exit(1)
+    else:
+        del checkpoint
+        del checkpoint_state_dict
+        del model_state_dict
 
 
 def main():
@@ -305,15 +323,15 @@ def run(
         warmup_completed = False
     # Warmup init msg:
     if rank == 0 and warmup_enabled:
-        print(f"||||||  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ||||||")
-    # Averaging init msg:
-    if rank == 0 and averaging_enabled:
-        print(f"||||||  RUNNING AVG LOSS ENABLED: Training will log averaged losses every: {mini_batches} steps.  ||||||")
-
+        print(f"    ██████  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ██████")
+    # Precision init msg:
     if config.train.fp16_run:
-        print(" ||||||  PRECISION: FP16 Mixed Precision  ||||||")
+        print("    ██████  PRECISION: FP16 Mixed Precision  ██████")
     else:
-        print("PRECISION: FP32")
+        if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
+            print("    ██████  PRECISION: TF32  ██████")
+        else:
+            print("    ██████  PRECISION: FP32  ██████")
 
     if rank == 0:
         writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
@@ -365,7 +383,6 @@ def run(
     from rvc.lib.algorithm.discriminators import MultiPeriodDiscriminator
     from rvc.lib.algorithm.synthesizers import Synthesizer
 
-    # Initialize models and optimizers
     net_g = Synthesizer(
         config.data.filter_length // 2 + 1,
         config.train.segment_size // config.data.hop_length,
@@ -377,37 +394,25 @@ def run(
         checkpointing=use_checkpointing
     ).to(device)
 
+    net_d = MultiPeriodDiscriminator(version, config.model.use_spectral_norm, False).to(device)
 
-    net_d = MultiPeriodDiscriminator(config.model.use_spectral_norm, use_checkpointing).to(device)
-
-    optim_g = Ranger(
+    optim_g = torch.optim.RAdam(
         net_g.parameters(),
-        lr = 0.0001, # config.train.learning_rate,
+        lr = 1e-4, # config.train.learning_rate,
         betas = (0.8, 0.99), # config.train.betas,
         eps = 1e-8, # config.train.eps,
-        # Ranger params:
-        weight_decay = 0,
-        alpha=0.5,
-        k=6,
-        N_sma_threshhold=5, # 4 or 5 can be tried
-        use_gc=False,
-        gc_conv_only=False,
-        gc_loc=False,
+        weight_decay=0.01,
+        decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
     )
-    optim_d = Ranger(
+    optim_d = torch.optim.RAdam(
         net_d.parameters(),
         lr = 1e-4, # config.train.learning_rate,
         betas = (0.8, 0.99), # config.train.betas,
         eps = 1e-8, # config.train.eps,
-        # Ranger params:
-        weight_decay = 0,
-        alpha=0.5,
-        k=6,
-        N_sma_threshhold=5, # 4 or 5 can be tried
-        use_gc=False,
-        gc_conv_only=False,
-        gc_loc=False,
+        weight_decay=0.01,
+        decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
     )
+    
 
     fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
 
@@ -439,6 +444,7 @@ def run(
     # Loading the pretrained Generator model
         if pretrainG != "" and pretrainG != "None":
             if rank == 0:
+                verify_checkpoint_shapes(pretrainG, net_g)
                 print(f"Loaded pretrained (G) '{pretrainG}'")
             if hasattr(net_g, "module"):
                 net_g.module.load_state_dict(
@@ -566,13 +572,13 @@ def run(
             # Logging of finished warmup
             if epoch == warmup_epochs:
                 warmup_completed = True
-                print(f"//////  Warmup completed at warmup epochs:{warmup_epochs}  //////")
+                print(f"    ██████  Warmup completed at pochs: {warmup_epochs}  ██████")
                 # Gen:
-                print(f"//////  LR G: {optim_g.param_groups[0]['lr']}  //////")
+                print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}  ██████")
                 # Discs:
-                print(f"//////  LR D: {optim_d.param_groups[0]['lr']}  //////")
+                print(f"    ██████  LR D: {optim_d.param_groups[0]['lr']}  ██████")
                 # Decay gamma:
-                print(f"//////  Starting the exponential lr decay with gamma of {config.train.lr_decay}  //////")
+                print(f"    ██████  Starting the exponential lr decay with gamma of {config.train.lr_decay}  ██████")
  
         # Once the warmup phase is completed, uses exponential lr decay
         if not warmup_enabled or warmup_completed:
@@ -607,12 +613,11 @@ def train_and_evaluate(
         optims (list): List of optimizers [optim_g, optim_d].
         scaler (GradScaler): Gradient scaler for mixed precision training.
         loaders (list): List of dataloaders [train_loader, eval_loader].
-        writers (list): List of TensorBoard writers [writer, writer_eval].
+        writers (list): List of TensorBoard writers [writer_eval].
         cache (list): List to cache data in GPU memory.
         use_cpu (bool): Whether to use CPU for training.
     """
     global global_step, warmup_completed
-
 
     net_g, net_d = nets
     optim_g, optim_d = optims
@@ -640,16 +645,10 @@ def train_and_evaluate(
 
     epoch_recorder = EpochRecorder()
 
-    # Over N mini-batches loss averaging
-    N = mini_batches  # Number of mini-batches after which the loss is logged
-    # Running loss init
-    if averaging_enabled:
-        running_loss_gen_all = 0.0
-        running_loss_disc_all = 0.0
-        running_loss_gen_fm = 0.0
-        running_loss_gen_mel = 0.0
-        running_loss_gen_kl = 0.0
-        running_loss_gen_env = 0.0
+    # Tensors init for averaged losses:
+    epoch_loss_tensor = torch.zeros(6, device=device)
+    multi_epoch_loss_tensor = torch.zeros(6, device=device)
+    num_batches_in_epoch = 0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
@@ -688,113 +687,79 @@ def train_and_evaluate(
                     dim=3,
                 )
 
-        # ----------   Discriminators Update   ----------
-                # Zeroing gradients
-                optim_d.zero_grad()
 
-            # Run the discriminator:
+            # Discriminator update   ---------------------------------
+
+                # MPD:
                 y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
                 with autocast(enabled=False):
-                    loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g) # loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                    loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-                # Accumulate losses for discriminator
-                if averaging_enabled:
-                    running_loss_disc_all += loss_disc #.item()  # For Discriminator
-
-        # Backward and update for discs:
-
-            # Backward and Step for: MPD
+            # Backpropagation and discriminator optimization:
+            optim_d.zero_grad()
             scaler.scale(loss_disc).backward()
             scaler.unscale_(optim_d)
 
-
-            # Clip/norm the gradients for Discriminator
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000.0)
-
-
-    # Nan and Inf debugging:
-        # for Discriminator
-            if not math.isfinite(grad_norm_d):
-                print('grad_norm_d is NaN or Inf')
-
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=100.0)
+#            if not math.isfinite(grad_norm_d):
+#                print('grad_norm_d is NaN or Inf')
 
             scaler.step(optim_d)
+            scaler.update()
 
-            scaler.update() # Adjust the loss scale based on the applied gradients
 
+            # Generator update   ---------------------------------
 
-            # ----------   Generator Update   ----------
-
-            # Generator backward and update
             with autocast(enabled=use_amp): # override of precision: dtype=torch.bfloat16
 
-                # Zeroing gradients
-                optim_g.zero_grad() # For Generator
-
-            # Discriminator Loss:
+                # Discriminator loss:
                 _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
 
-            # Loss functions for Generator:
                 with autocast(enabled=False):
-                    loss_fm = feature_loss(fmap_r, fmap_g) # Feature matching loss
 
+                    loss_fm = feature_loss(fmap_r, fmap_g) # Feature matching loss
                     loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0 # Multi-scale mel spectrogram loss
-                    loss_env = envelope_loss(wave, y_hat) # Envelope Matching Loss
                     loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl # Kullback–Leibler divergence
+
+                    loss_env = envelope_loss(wave, y_hat) # Envelope Matching Loss
 
                     loss_gen, _ = generator_loss(y_d_hat_g) # Generator's minimax
 
                     # Summed loss of generator:
                     loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl + loss_env
 
-            # Backpropagation and generator optimization
+
+            # Backpropagation and generator optimization:
+            optim_g.zero_grad()
             scaler.scale(loss_gen_all).backward()
             scaler.unscale_(optim_g)
 
-            # Clip/norm the gradients for Generator
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000.0) 
-
-        # Nan and Inf debugging for Generator
-            if not math.isfinite(grad_norm_g):
-                print('grad_norm_g is NaN or Inf')
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=100.0)
+#            if not math.isfinite(grad_norm_g):
+#                print('grad_norm_g is NaN or Inf')
 
             scaler.step(optim_g)
             scaler.update()
 
             global_step += 1
+            num_batches_in_epoch += 1
             pbar.update(1)
- 
-        # Accumulate losses for generator
-            if averaging_enabled:
-                running_loss_gen_all += loss_gen_all
-                running_loss_gen_fm += loss_fm
-                running_loss_gen_mel += loss_mel
-                running_loss_gen_kl += loss_kl
-                running_loss_gen_env += loss_env
 
+            # Accumulation of losses in the epoch_loss_tensor:
+            epoch_loss_tensor[0].add_(loss_disc)
+            epoch_loss_tensor[1].add_(loss_gen_all)
+            epoch_loss_tensor[2].add_(loss_fm)
+            epoch_loss_tensor[3].add_(loss_mel)
+            epoch_loss_tensor[4].add_(loss_kl)
+            epoch_loss_tensor[5].add_(loss_env)
 
-        # Logging of the averaged loss every N mini-batches
-            if averaging_enabled and rank == 0 and (batch_idx + 1) % N == 0:
-                avg_loss_gen_all = running_loss_gen_all / N
-                avg_loss_disc_all = running_loss_disc_all / N
-                avg_loss_gen_fm = running_loss_gen_fm / N
-                avg_loss_gen_mel = running_loss_gen_mel / N
-                avg_loss_gen_kl = running_loss_gen_kl / N
-                avg_loss_gen_env = running_loss_gen_env / N
-            # Logging:
-                writer.add_scalar('Average_Loss/Generator_Avg_Total', avg_loss_gen_all, global_step)
-                writer.add_scalar('Average_Loss/Discriminator_Avg_Total', avg_loss_disc_all, global_step)
-                writer.add_scalar('Average_Loss/Generator_Avg_FM', avg_loss_gen_fm, global_step)
-                writer.add_scalar('Average_Loss/Generator_Avg_MEL', avg_loss_gen_mel, global_step)
-                writer.add_scalar('Average_Loss/Generator_Avg_KL', avg_loss_gen_kl, global_step)
-                writer.add_scalar('Average_Loss/Generator_Avg_ENV', avg_loss_gen_env, global_step)
-            # Resets the running loss counters
-                running_loss_gen_all = 0.0
-                running_loss_disc_all = 0.0
-                running_loss_gen_fm = 0.0
-                running_loss_gen_mel = 0.0
-                running_loss_gen_kl = 0.0
-                running_loss_gen_env = 0.0
+            # Accumulation of losses in the 5_epoch_loss_tensor:
+            multi_epoch_loss_tensor[0].add_(loss_disc)
+            multi_epoch_loss_tensor[1].add_(loss_gen_all)
+            multi_epoch_loss_tensor[2].add_(loss_fm)
+            multi_epoch_loss_tensor[3].add_(loss_mel)
+            multi_epoch_loss_tensor[4].add_(loss_kl)
+            multi_epoch_loss_tensor[5].add_(loss_env)
 
     with torch.no_grad():
         torch.cuda.empty_cache()
@@ -833,32 +798,49 @@ def train_and_evaluate(
             if use_amp:
                 y_hat_mel = y_hat_mel.half()
 
+        # Codename;0's tweak / feature  |  Mel similarity metric
+        mel_spec_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel) # Calculate
+        print(f'Mel Spectrogram Similarity: {mel_spec_similarity:.2f}%') # Print
+        writer.add_scalar('Metric/Mel_Spectrogram_Similarity', mel_spec_similarity, global_step) # Log
+
+        # After each epoch, calculate and log the average loss:
+        if global_step % len(train_loader) == 0:
+            avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
+
+            writer.add_scalar("loss_avg/discriminator_total", avg_epoch_loss[0], global_step)
+            writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[1], global_step)
+            writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
+            writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
+            writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg/env", avg_epoch_loss[5], global_step)
+
+            num_batches_in_epoch = 0 # Reset batches_in_epoch counter
+            epoch_loss_tensor.zero_() # Reset tensor for the next epoch
+
+        # After every 5th epoch, calculate and log the average loss:
+        if epoch % 5 == 0:
+            avg_multi_epoch_loss = multi_epoch_loss_tensor / 5
+            writer.add_scalar("loss_avg_5/discriminator_total_5", avg_multi_epoch_loss[0], global_step)
+            writer.add_scalar("loss_avg_5/generator_total_5", avg_multi_epoch_loss[1], global_step)
+            writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
+            writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
+            writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg_5/env_5", avg_multi_epoch_loss[5], global_step)
+
+            multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
+
         lr = optim_g.param_groups[0]["lr"]
-#        if loss_mel > 75:
-#            loss_mel = 75
-#        if loss_kl > 9:
-#            loss_kl = 9
-
-            # Codename;0's tweak / feature
-        # Calculate the mel spectrogram similarity
-        mel_spec_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel)
-        # Print the similarity percentage to monitor during training
-        print(f'Mel Spectrogram Similarity: {mel_spec_similarity:.2f}%')
-
-        # Logging the similarity percentage to TensorBoard
-        writer.add_scalar('Metric/Mel_Spectrogram_Similarity', mel_spec_similarity, global_step)
-
 
         scalar_dict = {
-            "loss/g/total": loss_gen_all,
-            "loss/d/total": loss_disc,
+#            "loss/g/total": loss_gen_all, # Legacy
+#            "loss/d/total": loss_disc, # Legacy
             "learning_rate": lr,
             "grad/norm_d": grad_norm_d,
             "grad/norm_g": grad_norm_g,
-            "loss/g/fm": loss_fm,
-            "loss/g/mel": loss_mel,
-            "loss/g/kl": loss_kl,
-            #"loss/g/zm": loss_zm,
+#            "loss/g/fm": loss_fm, # Legacy
+#            "loss/g/mel": loss_mel, # Legacy
+#            "loss/g/kl": loss_kl, # Legacy
+#            "loss/g/env": loss_env, # Legacy
         }
 
         image_dict = {
@@ -900,6 +882,25 @@ def train_and_evaluate(
         lr_g = optim_g.param_groups[0]['lr']
         lr_d = optim_d.param_groups[0]['lr']
 
+        # Check completion
+        if epoch >= custom_total_epoch:
+            print(f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen.")
+
+            pid_file_path = os.path.join(experiment_dir, "config.json")
+            with open(pid_file_path, "r") as pid_file:
+                pid_data = json.load(pid_file)
+            with open(pid_file_path, "w") as pid_file:
+                pid_data.pop("process_pids", None)
+                json.dump(pid_data, pid_file, indent=4)
+
+            # Final model
+            model_add.append(os.path.join(experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"))
+            done = True
+
+        # Print training progress
+        record = f"{model_name} | epoch={epoch} | step={global_step} | {epoch_recorder.record()}"
+        print(record)
+
         # Save weights every N epochs
         if epoch % save_every_epoch == 0:
             checkpoint_suffix = f"{2333333 if save_only_latest else global_step}.pth"
@@ -912,6 +913,8 @@ def train_and_evaluate(
                 epoch,
                 os.path.join(experiment_dir, "G_" + checkpoint_suffix),
             )
+
+            # Save Discriminator checkpoint
             save_checkpoint(
                 net_d,
                 optim_d,
@@ -919,34 +922,12 @@ def train_and_evaluate(
                 epoch,
                 os.path.join(experiment_dir, "D_" + checkpoint_suffix),
             )
-
             if custom_save_every_weights:
                 model_add.append(
                     os.path.join(
                         experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
                     )
                 )
-
-
-        # Check completion
-        if epoch >= custom_total_epoch:
-            print(
-                f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen."
-            )
-
-            pid_file_path = os.path.join(experiment_dir, "config.json")
-            with open(pid_file_path, "r") as pid_file:
-                pid_data = json.load(pid_file)
-            with open(pid_file_path, "w") as pid_file:
-                pid_data.pop("process_pids", None)
-                json.dump(pid_data, pid_file, indent=4)
-            # Final model
-            model_add.append(
-                os.path.join(
-                    experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
-                )
-            )
-            done = True
 
         if model_add:
             ckpt = (
@@ -968,15 +949,11 @@ def train_and_evaluate(
                         hps=hps,
                         vocoder=vocoder,
                     )
-        record = f"{model_name} | epoch={epoch} | step={global_step} | {epoch_recorder.record()}"
-        print(record)
         if done:
             os._exit(2333333)
 
         with torch.no_grad():
             torch.cuda.empty_cache()
-
-
 
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn")
