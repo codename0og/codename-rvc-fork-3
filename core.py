@@ -487,7 +487,7 @@ def run_extract_script(
                 sample_rate,
                 embedder_model,
                 embedder_model_custom,
-                include_mutes
+                include_mutes,
             ],
         ),
     ]
@@ -510,8 +510,6 @@ def run_train_script(
     gpu: int,
     use_warmup: bool,
     warmup_duration: int,
-    n_value_custom: int,
-    use_checkpointing: bool,
     pretrained: bool,
     cleanup: bool,
     index_algorithm: str = "Auto",
@@ -520,13 +518,16 @@ def run_train_script(
     g_pretrained_path: str = None,
     d_pretrained_path: str = None,
     vocoder: str = "HiFi-GAN",
+    use_checkpointing: bool = False,
 ):
 
     if pretrained == True:
         from rvc.lib.tools.pretrained_selector import pretrained_selector
 
         if custom_pretrained == False:
-            pg, pd = pretrained_selector(str(rvc_version), str(vocoder), True, int(sample_rate))
+            pg, pd = pretrained_selector(
+                str(rvc_version), str(vocoder), True, int(sample_rate)
+            )
         else:
             if g_pretrained_path is None or d_pretrained_path is None:
                 raise ValueError(
@@ -559,7 +560,6 @@ def run_train_script(
                 warmup_duration,
                 cleanup,
                 vocoder,
-                n_value_custom,
                 use_checkpointing
             ],
         ),
@@ -1860,9 +1860,9 @@ def parse_arguments():
     preprocess_parser.add_argument(
         "--cut_preprocess",
         type=str,
-        choices=['Skip', 'Simple', 'Automatic'],
+        choices=["Skip", "Simple", "Automatic"],
         help="Cut the dataset into smaller segments for faster preprocessing.",
-        default='Automatic',
+        default="Automatic",
         required=True,
     )
     preprocess_parser.add_argument(
@@ -1904,7 +1904,7 @@ def parse_arguments():
         choices=[0.0, 0.1, 0.2, 0.3, 0.4],
         default=0.3,
         required=False,
-    )    
+    )
 
     # Parser for 'extract' mode
     extract_parser = subparsers.add_parser(
@@ -1983,8 +1983,8 @@ def parse_arguments():
         help="Number of silent files to include.",
         choices=range(0, 11),
         default=2,
-        required=True
-    )    
+        required=True,
+    )
 
     # Parser for 'train' mode
     train_parser = subparsers.add_parser("train", help="Train an RVC model.")
@@ -2004,6 +2004,14 @@ def parse_arguments():
         help="Vocoder name",
         choices=["HiFi-GAN", "MRF HiFi-GAN", "RefineGAN"],
         default="HiFi-GAN",
+    )
+    train_parser.add_argument(
+        "--use_checkpointing",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Enables usage of checkpointing.",
+        default=False,
+        required=False,
     )
     train_parser.add_argument(
         "--save_every_epoch",
@@ -2093,21 +2101,7 @@ def parse_arguments():
         type=int,
         help="Duration of warmup phase (Measured in epochs).",
         choices=range(1, 100),
-        default=5,
-    )
-    train_parser.add_argument(
-        "--n_value_custom",
-        type=int,
-        help="Number of mini batches to use for avg of running loss.",
-        choices=range(1, 100000),
-        default=0,
-    )
-    train_parser.add_argument(
-        "--use_checkpointing",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        help="Enables usage of checkpointing.",
-        default=False,
+        default=10,
     )
     train_parser.add_argument(
         "--cleanup",
@@ -2514,7 +2508,6 @@ def main():
                 g_pretrained_path=args.g_pretrained_path,
                 d_pretrained_path=args.d_pretrained_path,
                 vocoder=args.vocoder,
-                n_value_custom=args.n_value_custom,
                 use_checkpointing=args.use_checkpointing,
             )
         elif args.mode == "index":
