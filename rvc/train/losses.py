@@ -1,6 +1,5 @@
 import torch
 
-MaxPool = torch.nn.MaxPool1d(160)
 
 def feature_loss(fmap_r, fmap_g):
     """
@@ -10,12 +9,11 @@ def feature_loss(fmap_r, fmap_g):
         fmap_r (list of torch.Tensor): List of reference feature maps.
         fmap_g (list of torch.Tensor): List of generated feature maps.
     """
-    loss = sum(
+    return 2 * sum(
         torch.mean(torch.abs(rl - gl))
         for dr, dg in zip(fmap_r, fmap_g)
         for rl, gl in zip(dr, dg)
     )
-    return loss * 2
 
 
 def discriminator_loss(disc_real_outputs, disc_generated_outputs):
@@ -47,14 +45,15 @@ def generator_loss(disc_outputs):
     Args:
         disc_outputs (list of torch.Tensor): List of discriminator outputs for generated samples.
     """
-    gen_losses = []
     loss = 0
+    gen_losses = []
     for dg in disc_outputs:
         l = torch.mean((1 - dg.float()) ** 2)
-        gen_losses.append(l.item())
+        # gen_losses.append(l.item())
         loss += l
 
     return loss, gen_losses
+
 
 def discriminator_loss_scaled(disc_real, disc_fake, scale=1.0):
     loss = 0
@@ -64,6 +63,7 @@ def discriminator_loss_scaled(disc_real, disc_fake, scale=1.0):
         _loss = real_loss + fake_loss
         loss += _loss if i < len(disc_real) / 2 else scale * _loss
     return loss, None, None
+
 
 def generator_loss_scaled(disc_outputs, scale=1.0):
     loss = 0
@@ -84,20 +84,18 @@ def kl_loss(z_p, logs_q, m_p, logs_p, z_mask):
         logs_p (torch.Tensor): Log variance of p [b, h, t_t].
         z_mask (torch.Tensor): Mask for the latent variables [b, h, t_t].
     """
-    kl = logs_p - logs_q - 0.5
-    kl += 0.5 * ((z_p - m_p) ** 2) * torch.exp(-2.0 * logs_p)
-
-    kl = torch.sum(kl * z_mask)
-    loss = kl / torch.sum(z_mask)
+    kl = logs_p - logs_q - 0.5 + 0.5 * ((z_p - m_p) ** 2) * torch.exp(-2 * logs_p)
+    kl = (kl * z_mask).sum()
+    loss = kl / z_mask.sum()
 
     return loss
 
 
+MaxPool = torch.nn.MaxPool1d(160)
 
 def envelope_loss(y, y_g):
+    loss = 0
+    loss += torch.mean(torch.abs(MaxPool(y) - MaxPool(y_g)))
+    loss += torch.mean(torch.abs(MaxPool(-y) - MaxPool(-y_g)))
 
-  loss = 0
-  loss += torch.mean(torch.abs(MaxPool( y) - MaxPool( y_g)))
-  loss += torch.mean(torch.abs(MaxPool(-y) - MaxPool(-y_g)))
-
-  return loss
+    return loss
