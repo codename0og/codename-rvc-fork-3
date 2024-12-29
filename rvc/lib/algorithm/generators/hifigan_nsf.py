@@ -1,13 +1,14 @@
 import math
+from typing import Optional
+
 import torch
 from torch.nn.utils import remove_weight_norm
 from torch.nn.utils.parametrizations import weight_norm
-import torch.utils.checkpoint as checkpoint
-from typing import Optional
+from torch.utils.checkpoint import checkpoint
 
+from rvc.lib.algorithm.commons import init_weights
 from rvc.lib.algorithm.generators.hifigan import SineGenerator
 from rvc.lib.algorithm.residuals import LRELU_SLOPE, ResBlock
-from rvc.lib.algorithm.commons import init_weights
 
 
 class SourceModuleHnNSF(torch.nn.Module):
@@ -174,18 +175,20 @@ class HiFiGANNSFGenerator(torch.nn.Module):
     ):
         har_source, _, _ = self.m_source(f0, self.upp)
         har_source = har_source.transpose(1, 2)
-
+        # new tensor
         x = self.conv_pre(x)
 
         if g is not None:
+            # in-place call
             x += self.cond(g)
 
         for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
-            x = torch.nn.functional.leaky_relu(x, self.lrelu_slope) # (x, self.lrelu_slope, inplace=Trie)
+            # in-place call
+            x = torch.nn.functional.leaky_relu_(x, self.lrelu_slope)
 
             # Apply upsampling layer
             if self.training and self.checkpointing:
-                x = checkpoint.checkpoint(ups, x, use_reentrant=False)
+                x = checkpoint(ups, x, use_reentrant=False)
             else:
                 x = ups(x)
 
@@ -200,14 +203,13 @@ class HiFiGANNSFGenerator(torch.nn.Module):
 
             # Checkpoint or regular computation for ResBlocks
             if self.training and self.checkpointing:
-                x = checkpoint.checkpoint(
-                    resblock_forward, x, blocks, use_reentrant=False
-                )
+                x = checkpoint(resblock_forward, x, blocks, use_reentrant=False)
             else:
                 x = resblock_forward(x, blocks)
-
-        x = torch.nn.functional.leaky_relu(x) # (x, inplace=True)
-        x = torch.tanh(self.conv_post(x))
+        # in-place call
+        x = torch.nn.functional.leaky_relu_(x)
+        # in-place call
+        x = torch.tanh_(self.conv_post(x))
 
         return x
 
