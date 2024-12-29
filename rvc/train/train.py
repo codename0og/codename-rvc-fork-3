@@ -94,9 +94,6 @@ with open(config_save_path, "r") as f:
 config = HParams(**config)
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
-# for Nvidia's CUDA device selection can be done from command line / UI
-# for AMD the device selection can only be done from .bat file using HIP_VISIBLE_DEVICES
-os.environ["CUDA_VISIBLE_DEVICES"] = gpus.replace("-", ",")
 
 # Torch backends config
 torch.backends.cuda.matmul.allow_tf32 = False
@@ -194,6 +191,7 @@ def main():
     """
     Main function to start the training process.
     """
+    global gpus
 
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "50000"
@@ -213,12 +211,15 @@ def main():
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        n_gpus = torch.cuda.device_count()
+        gpus = [int(item) for item in gpus.split('-')]
+        n_gpus = len(gpus) 
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
+        gpus = [0]
         n_gpus = 1
     else:
         device = torch.device("cpu")
+        gpus = [0]
         n_gpus = 1
         print("No GPU detected, fallback to CPU. This will take a very long time...")
 
@@ -235,11 +236,11 @@ def main():
             except json.JSONDecodeError:
                 pass
         with open(config_save_path, "w") as pid_file:
-            for i in range(n_gpus):
+            for rank, device_id in enumerate(gpus):
                 subproc = mp.Process(
                     target=run,
                     args=(
-                        i,
+                        rank,
                         n_gpus,
                         experiment_dir,
                         pretrainG,
@@ -248,6 +249,7 @@ def main():
                         save_every_weights,
                         config,
                         device,
+                        device_id,
                     ),
                 )
                 children.append(subproc)
@@ -301,6 +303,7 @@ def run(
     custom_save_every_weights,
     config,
     device,
+    device_id,
 ):
     """
     Runs the training loop on a specific GPU or CPU.
@@ -321,17 +324,32 @@ def run(
 
     if 'warmup_completed' not in globals():
         warmup_completed = False
+
     # Warmup init msg:
     if rank == 0 and warmup_enabled:
         print(f"    ██████  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ██████")
+
     # Precision init msg:
     if config.train.fp16_run:
-        print("    ██████  PRECISION: FP16 Mixed Precision  ██████")
+        print("    ██████  PRECISION: FP16 AMP         ██████")
     else:
         if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
-            print("    ██████  PRECISION: TF32  ██████")
+            print("    ██████  PRECISION: TF32             ██████")
         else:
-            print("    ██████  PRECISION: FP32  ██████")
+            print("    ██████  PRECISION: FP32             ██████")
+
+    # backends.cudnn checks:
+        # For benchmark:
+    if torch.backends.cudnn.benchmark:
+        print("    ██████  cudnn.benchmark: True       ██████")
+    else:
+        print("    ██████  cudnn.benchmark: False      ██████")
+        # For deterministic:
+    if torch.backends.cudnn.deterministic:
+        print("    ██████  cudnn.deterministic: True   ██████")
+    else:
+        print("    ██████  cudnn.deterministic: False  ██████")
+
 
     if rank == 0:
         writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
@@ -348,7 +366,7 @@ def run(
     torch.manual_seed(config.train.seed)
 
     if torch.cuda.is_available():
-        torch.cuda.set_device(rank)
+        torch.cuda.set_device(device_id)
 
     # Create datasets and dataloaders
     from data_utils import (
@@ -392,16 +410,25 @@ def run(
         sr=sample_rate,
         vocoder=vocoder,
         checkpointing=use_checkpointing
-    ).to(device)
+    )
 
-    net_d = MultiPeriodDiscriminator(version, config.model.use_spectral_norm, use_checkpointing).to(device)
+    net_d = MultiPeriodDiscriminator(
+        version, config.model.use_spectral_norm, use_checkpointing=use_checkpointing
+    )
+
+    if torch.cuda.is_available():
+        net_g = net_g.cuda(device_id)
+        net_d = net_d.cuda(device_id)
+    else:
+        net_g.to(device)
+        net_d.to(device)
 
     optim_g = torch.optim.RAdam(
         net_g.parameters(),
         lr = 1e-4, # config.train.learning_rate,
         betas = (0.8, 0.99), # config.train.betas,
         eps = 1e-8, # config.train.eps,
-        weight_decay=0.01,
+        weight_decay=0,
         decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
     )
     optim_d = torch.optim.RAdam(
@@ -409,21 +436,17 @@ def run(
         lr = 1e-4, # config.train.learning_rate,
         betas = (0.8, 0.99), # config.train.betas,
         eps = 1e-8, # config.train.eps,
-        weight_decay=0.01,
+        weight_decay=0,
         decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
     )
-    
+
 
     fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
 
     # Wrap models with DDP for multi-gpu processing
     if n_gpus > 1 and device.type == "cuda":
-        net_g = DDP(net_g, device_ids=[rank]) # find_unused_parameters=True)
-        net_d = DDP(net_d, device_ids=[rank]) # find_unused_parameters=True)
-    else:
-        # CPU only (no need to move as they're already on CPU)
-        net_g = net_g
-        net_d = net_d
+        net_g = DDP(net_g, device_ids=[device_id]) # find_unused_parameters=True)
+        net_d = DDP(net_d, device_ids=[device_id]) # find_unused_parameters=True)
 
     # Load checkpoint if available
     try:
@@ -537,13 +560,22 @@ def run(
     else:
         for info in train_loader:
             phone, phone_lengths, pitch, pitchf, _, _, _, _, sid = info
-            reference = (
-                phone.to(device),
-                phone_lengths.to(device),
-                pitch.to(device),
-                pitchf.to(device),
-                sid.to(device),
-            )
+            if device.type == "cuda":
+                reference = (
+                    phone.cuda(device_id, non_blocking=True),
+                    phone_lengths.cuda(device_id, non_blocking=True),
+                    pitch.cuda(device_id, non_blocking=True),
+                    pitchf.cuda(device_id, non_blocking=True),
+                    sid.cuda(device_id, non_blocking=True),
+                )  
+            else:
+                reference = (
+                    phone.to(device),
+                    phone_lengths.to(device),
+                    pitch.to(device),
+                    pitchf.to(device),
+                    sid.to(device),
+                )
             break
 
     for epoch in range(epoch_str, total_epoch + 1):
@@ -560,6 +592,7 @@ def run(
             custom_save_every_weights,
             custom_total_epoch,
             device,
+            device_id,
             reference,
             fn_mel_loss,
         )
@@ -599,6 +632,7 @@ def train_and_evaluate(
     custom_save_every_weights,
     custom_total_epoch,
     device,
+    device_id,
     reference,
     fn_mel_loss,
 ):
@@ -636,7 +670,7 @@ def train_and_evaluate(
         if cache == []:
             for batch_idx, info in enumerate(train_loader):
                 # phone, phone_lengths, pitch, pitchf, spec, spec_lengths, wave, wave_lengths, sid
-                info = [tensor.cuda(rank, non_blocking=True) for tensor in info]
+                info = [tensor.cuda(device_id, non_blocking=True) for tensor in info]
                 cache.append((batch_idx, info))
         else:
             shuffle(cache)
@@ -653,7 +687,7 @@ def train_and_evaluate(
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
             if device.type == "cuda" and not cache_data_in_gpu:
-                info = [tensor.cuda(rank, non_blocking=True) for tensor in info]
+                info = [tensor.cuda(device_id, non_blocking=True) for tensor in info]
             elif device.type != "cuda":
                 info = [tensor.to(device) for tensor in info]
             # else iterator is going thru a cached list with a device already assigned
