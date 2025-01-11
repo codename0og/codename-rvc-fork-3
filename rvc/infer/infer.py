@@ -1,5 +1,6 @@
 import os
 import sys
+import soxr
 import time
 import torch
 import librosa
@@ -46,7 +47,7 @@ class VoiceConverter:
         """
         Initializes the VoiceConverter with default configuration, and sets up models and parameters.
         """
-        self.config = Config()  # Load RVC configuration
+        self.config = Config()  # Load configuration
         self.hubert_model = (
             None  # Initialize the Hubert model (for embedding extraction)
         )
@@ -69,12 +70,7 @@ class VoiceConverter:
             embedder_model_custom (str): Path to the custom HuBERT model.
         """
         self.hubert_model = load_embedding(embedder_model, embedder_model_custom)
-        self.hubert_model.to(self.config.device)
-        self.hubert_model = (
-            self.hubert_model.half()
-            if self.config.is_half
-            else self.hubert_model.float()
-        )
+        self.hubert_model = self.hubert_model.to(self.config.device).float()
         self.hubert_model.eval()
 
     @staticmethod
@@ -123,7 +119,7 @@ class VoiceConverter:
                 ]
                 target_sr = min(common_sample_rates, key=lambda x: abs(x - sample_rate))
                 audio = librosa.resample(
-                    audio, orig_sr=sample_rate, target_sr=target_sr
+                    audio, orig_sr=sample_rate, target_sr=target_sr, res_type="soxr_vhq"
                 )
                 sf.write(output_path, audio, target_sr, format=output_format.lower())
             return output_path
@@ -317,7 +313,7 @@ class VoiceConverter:
                     print(f"Converted audio chunk {len(converted_chunks)}")
 
             if split_audio:
-                audio_opt = merge_audio(converted_chunks, intervals, 16000, self.tgt_sr)
+                audio_opt = merge_audio(chunks, converted_chunks, intervals, 16000, self.tgt_sr)
             else:
                 audio_opt = converted_chunks[0]
 
@@ -481,13 +477,12 @@ class VoiceConverter:
                 *self.cpt["config"],
                 use_f0=self.use_f0,
                 text_enc_hidden_dim=self.text_enc_hidden_dim,
-                is_half=False,
                 vocoder=self.vocoder,
             )
             del self.net_g.enc_q
             self.net_g.load_state_dict(self.cpt["weight"], strict=False)
-            self.net_g.eval().to(self.config.device)
-            self.net_g = self.net_g.float()
+            self.net_g = self.net_g.to(self.config.device).float()
+            self.net_g.eval()
 
     def setup_vc_instance(self):
         """
