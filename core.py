@@ -15,7 +15,6 @@ logs_path = os.path.join(current_script_directory, "logs")
 from rvc.lib.tools.prerequisites_download import prequisites_download_pipeline
 from rvc.train.process.model_blender import model_blender
 from rvc.train.process.model_information import model_information
-from rvc.train.process.extract_small_model import extract_small_model
 from rvc.lib.tools.analyzer import analyze_audio
 from rvc.lib.tools.launch_tensorboard import launch_tensorboard_pipeline
 from rvc.lib.tools.model_download import model_download_pipeline
@@ -428,8 +427,6 @@ def run_preprocess_script(
     chunk_len: float,
     overlap_len: float,
 ):
-    config = get_config()
-    per = 3.0 if config.is_half else 3.7
     preprocess_script_path = os.path.join("rvc", "train", "preprocess", "preprocess.py")
     command = [
         python,
@@ -440,7 +437,6 @@ def run_preprocess_script(
                 os.path.join(logs_path, model_name),
                 dataset_path,
                 sample_rate,
-                per,
                 cpu_cores,
                 cut_preprocess,
                 process_effects,
@@ -458,7 +454,6 @@ def run_preprocess_script(
 # Extract
 def run_extract_script(
     model_name: str,
-    rvc_version: str,
     f0_method: str,
     hop_length: int,
     cpu_cores: int,
@@ -483,7 +478,6 @@ def run_extract_script(
                 hop_length,
                 cpu_cores,
                 gpu,
-                rvc_version,
                 sample_rate,
                 embedder_model,
                 embedder_model_custom,
@@ -500,7 +494,6 @@ def run_extract_script(
 # Train
 def run_train_script(
     model_name: str,
-    rvc_version: str,
     save_every_epoch: int,
     save_only_latest: bool,
     save_every_weights: bool,
@@ -526,7 +519,7 @@ def run_train_script(
 
         if custom_pretrained == False:
             pg, pd = pretrained_selector(
-                str(rvc_version), str(vocoder), True, int(sample_rate)
+                str(vocoder), int(sample_rate)
             )
         else:
             if g_pretrained_path is None or d_pretrained_path is None:
@@ -549,7 +542,6 @@ def run_train_script(
                 total_epoch,
                 pg,
                 pd,
-                rvc_version,
                 gpu,
                 batch_size,
                 sample_rate,
@@ -565,39 +557,22 @@ def run_train_script(
         ),
     ]
     subprocess.run(command)
-    run_index_script(model_name, rvc_version, index_algorithm)
+    # run_index_script(model_name, rvc_version, index_algorithm)
     return f"Model {model_name} trained successfully."
 
 
 # Index
-def run_index_script(model_name: str, rvc_version: str, index_algorithm: str):
+def run_index_script(model_name: str, index_algorithm: str):
     index_script_path = os.path.join("rvc", "train", "process", "extract_index.py")
     command = [
         python,
         index_script_path,
         os.path.join(logs_path, model_name),
-        rvc_version,
         index_algorithm,
     ]
 
     subprocess.run(command)
     return f"Index file for {model_name} generated successfully."
-
-
-# Model extract
-def run_model_extract_script(
-    pth_path: str,
-    model_name: str,
-    sample_rate: int,
-    pitch_guidance: bool,
-    rvc_version: str,
-    epoch: int,
-    step: int,
-):
-    extract_small_model(
-        pth_path, model_name, sample_rate, pitch_guidance, rvc_version, epoch, step
-    )
-    return f"Model {model_name} extracted successfully."
 
 
 # Model information
@@ -627,18 +602,12 @@ def run_download_script(model_link: str):
 
 # Prerequisites
 def run_prerequisites_script(
-    pretraineds_v1_f0: bool,
-    pretraineds_v1_nof0: bool,
-    pretraineds_v2_f0: bool,
-    pretraineds_v2_nof0: bool,
+    pretraineds_hifigan: bool,
     models: bool,
     exe: bool,
 ):
     prequisites_download_pipeline(
-        pretraineds_v1_f0,
-        pretraineds_v1_nof0,
-        pretraineds_v2_f0,
-        pretraineds_v2_nof0,
+        pretraineds_hifigan,
         models,
         exe,
     )
@@ -1914,13 +1883,6 @@ def parse_arguments():
         "--model_name", type=str, help="Name of the model.", required=True
     )
     extract_parser.add_argument(
-        "--rvc_version",
-        type=str,
-        help="Version of the RVC model ('v1' or 'v2').",
-        choices=["v1", "v2"],
-        default="v2",
-    )
-    extract_parser.add_argument(
         "--f0_method",
         type=str,
         help="Pitch extraction method to use.",
@@ -1990,13 +1952,6 @@ def parse_arguments():
     train_parser = subparsers.add_parser("train", help="Train an RVC model.")
     train_parser.add_argument(
         "--model_name", type=str, help="Name of the model to be trained.", required=True
-    )
-    train_parser.add_argument(
-        "--rvc_version",
-        type=str,
-        help="Version of the RVC model to train ('v1' or 'v2').",
-        choices=["v1", "v2"],
-        default="v2",
     )
     train_parser.add_argument(
         "--vocoder",
@@ -2134,63 +2089,11 @@ def parse_arguments():
         "--model_name", type=str, help="Name of the model.", required=True
     )
     index_parser.add_argument(
-        "--rvc_version",
-        type=str,
-        help="Version of the RVC model ('v1' or 'v2').",
-        choices=["v1", "v2"],
-        default="v2",
-    )
-    index_parser.add_argument(
         "--index_algorithm",
         type=str,
         choices=["Auto", "Faiss", "KMeans"],
         help="Choose the method for generating the index file.",
         default="Auto",
-        required=False,
-    )
-
-    # Parser for 'model_extract' mode
-    model_extract_parser = subparsers.add_parser(
-        "model_extract", help="Extract a specific epoch from a trained model."
-    )
-    model_extract_parser.add_argument(
-        "--pth_path", type=str, help="Path to the main .pth model file.", required=True
-    )
-    model_extract_parser.add_argument(
-        "--model_name", type=str, help="Name of the model.", required=True
-    )
-    model_extract_parser.add_argument(
-        "--sample_rate",
-        type=int,
-        help="Sampling rate of the extracted model.",
-        choices=[32000, 40000, 48000],
-        required=True,
-    )
-    model_extract_parser.add_argument(
-        "--pitch_guidance",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        help="Enable or disable pitch guidance for the extracted model.",
-        required=True,
-    )
-    model_extract_parser.add_argument(
-        "--rvc_version",
-        type=str,
-        help="Version of the extracted RVC model ('v1' or 'v2').",
-        choices=["v1", "v2"],
-        default="v2",
-    )
-    model_extract_parser.add_argument(
-        "--epoch",
-        type=int,
-        help="Epoch number to extract from the model.",
-        choices=range(1, 10001),
-        required=True,
-    )
-    model_extract_parser.add_argument(
-        "--step",
-        type=str,
-        help="Step number to extract from the model (optional).",
         required=False,
     )
 
@@ -2247,32 +2150,11 @@ def parse_arguments():
         "prerequisites", help="Install prerequisites for RVC."
     )
     prerequisites_parser.add_argument(
-        "--pretraineds_v1_f0",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        default=False,
-        help="Download pretrained models for RVC v1.",
-    )
-    prerequisites_parser.add_argument(
-        "--pretraineds_v2_f0",
+        "--pretraineds_hifigan",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
         default=True,
         help="Download pretrained models for RVC v2.",
-    )
-    prerequisites_parser.add_argument(
-        "--pretraineds_v1_nof0",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        default=False,
-        help="Download non f0 pretrained models for RVC v1.",
-    )
-    prerequisites_parser.add_argument(
-        "--pretraineds_v2_nof0",
-        type=lambda x: bool(strtobool(x)),
-        choices=[True, False],
-        default=False,
-        help="Download non f0 pretrained models for RVC v2.",
     )
     prerequisites_parser.add_argument(
         "--models",
@@ -2477,7 +2359,6 @@ def main():
         elif args.mode == "extract":
             run_extract_script(
                 model_name=args.model_name,
-                rvc_version=args.rvc_version,
                 f0_method=args.f0_method,
                 hop_length=args.hop_length,
                 cpu_cores=args.cpu_cores,
@@ -2490,7 +2371,6 @@ def main():
         elif args.mode == "train":
             run_train_script(
                 model_name=args.model_name,
-                rvc_version=args.rvc_version,
                 save_every_epoch=args.save_every_epoch,
                 save_only_latest=args.save_only_latest,
                 save_every_weights=args.save_every_weights,
@@ -2513,18 +2393,7 @@ def main():
         elif args.mode == "index":
             run_index_script(
                 model_name=args.model_name,
-                rvc_version=args.rvc_version,
                 index_algorithm=args.index_algorithm,
-            )
-        elif args.mode == "model_extract":
-            run_model_extract_script(
-                pth_path=args.pth_path,
-                model_name=args.model_name,
-                sample_rate=args.sample_rate,
-                pitch_guidance=args.pitch_guidance,
-                rvc_version=args.rvc_version,
-                epoch=args.epoch,
-                step=args.step,
             )
         elif args.mode == "model_information":
             run_model_information_script(
@@ -2545,10 +2414,7 @@ def main():
             )
         elif args.mode == "prerequisites":
             run_prerequisites_script(
-                pretraineds_v1_f0=args.pretraineds_v1_f0,
-                pretraineds_v1_nof0=args.pretraineds_v1_nof0,
-                pretraineds_v2_f0=args.pretraineds_v2_f0,
-                pretraineds_v2_nof0=args.pretraineds_v2_nof0,
+                pretraineds_hifigan=args.pretraineds_hifigan,
                 models=args.models,
                 exe=args.exe,
             )
