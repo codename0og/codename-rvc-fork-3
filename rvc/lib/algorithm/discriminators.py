@@ -16,17 +16,17 @@ class MultiPeriodDiscriminator(torch.nn.Module):
     the input signal at different periods.
 
     Args:
-        periods (str): Periods of the discriminator. V1 = [2, 3, 5, 7, 11, 17], V2 = [2, 3, 5, 7, 11, 17, 23, 37].
+        periods (str): Periods of the discriminator.
         use_spectral_norm (bool): Whether to use spectral normalization.
             Defaults to False.
     """
 
     def __init__(
-        self, version: str, use_spectral_norm: bool = False, use_checkpointing: bool = False
+        self, use_spectral_norm: bool = False, use_checkpointing: bool = False
     ):
         super(MultiPeriodDiscriminator, self).__init__()
         periods = (
-            [2, 3, 5, 7, 11, 17] if version == "v1" else [2, 3, 5, 7, 11, 17, 23, 37]
+            [2, 3, 5, 7, 11, 17, 23, 37]
         )
         self.use_checkpointing = use_checkpointing
         self.discriminators = torch.nn.ModuleList(
