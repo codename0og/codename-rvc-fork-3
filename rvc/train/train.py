@@ -710,7 +710,7 @@ def train_and_evaluate(
 
             # MultiPeriodDiscriminator:
             y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
-            loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+            loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
 
             # Discriminator backward and update
