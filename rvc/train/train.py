@@ -71,18 +71,17 @@ save_every_epoch = int(sys.argv[2])
 total_epoch = int(sys.argv[3])
 pretrainG = sys.argv[4]
 pretrainD = sys.argv[5]
-version = sys.argv[6]
-gpus = sys.argv[7]
-batch_size = int(sys.argv[8])
-sample_rate = int(sys.argv[9])
-save_only_latest = strtobool(sys.argv[10])
-save_every_weights = strtobool(sys.argv[11])
-cache_data_in_gpu = strtobool(sys.argv[12])
-use_warmup = strtobool(sys.argv[13])
-warmup_duration = int(sys.argv[14])
-cleanup = strtobool(sys.argv[15])
-vocoder = sys.argv[16]
-use_checkpointing = strtobool(sys.argv[17])
+gpus = sys.argv[6]
+batch_size = int(sys.argv[7])
+sample_rate = int(sys.argv[8])
+save_only_latest = strtobool(sys.argv[9])
+save_every_weights = strtobool(sys.argv[10])
+cache_data_in_gpu = strtobool(sys.argv[11])
+use_warmup = strtobool(sys.argv[12])
+warmup_duration = int(sys.argv[13])
+cleanup = strtobool(sys.argv[14])
+vocoder = sys.argv[15]
+use_checkpointing = strtobool(sys.argv[16])
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
@@ -99,7 +98,7 @@ config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = False
 
 # Globals
 global_step = 0
@@ -107,8 +106,7 @@ global_step = 0
 warmup_epochs = warmup_duration
 warmup_enabled = use_warmup
 warmup_completed = False
-
-
+randomized = True
 
 # --------------------------   Custom functions land in here   --------------------------
 
@@ -330,13 +328,10 @@ def run(
         print(f"    ██████  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ██████")
 
     # Precision init msg:
-    if config.train.fp16_run:
-        print("    ██████  PRECISION: FP16 AMP         ██████")
+    if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
+        print("    ██████  PRECISION: TF32             ██████")
     else:
-        if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
-            print("    ██████  PRECISION: TF32             ██████")
-        else:
-            print("    ██████  PRECISION: FP32             ██████")
+        print("    ██████  PRECISION: FP32             ██████")
 
     # backends.cudnn checks:
         # For benchmark:
@@ -363,7 +358,7 @@ def run(
         rank=rank if device.type == "cuda" else 0,
     )
 
-    torch.manual_seed(config.train.seed)
+    torch.manual_seed(9999)
 
     if torch.cuda.is_available():
         torch.cuda.set_device(device_id)
@@ -406,14 +401,14 @@ def run(
         config.train.segment_size // config.data.hop_length,
         **config.model,
         use_f0=True,
-        is_half=config.train.fp16_run and device.type == "cuda",
         sr=sample_rate,
         vocoder=vocoder,
-        checkpointing=use_checkpointing
+        checkpointing=use_checkpointing,
+        randomized=randomized, # noobies
     )
 
     net_d = MultiPeriodDiscriminator(
-        version, config.model.use_spectral_norm, use_checkpointing=use_checkpointing
+        config.model.use_spectral_norm, use_checkpointing=use_checkpointing
     )
 
     if torch.cuda.is_available():
@@ -528,8 +523,6 @@ def run(
         optim_d, gamma=config.train.lr_decay, last_epoch=epoch_str - 1
     )
 
-    scaler = GradScaler(enabled=config.train.fp16_run and device.type == "cuda")
-
     cache = []
     # get the first sample as reference for tensorboard evaluation
     # custom reference temporarily disabled
@@ -585,7 +578,6 @@ def run(
             config,
             [net_g, net_d],
             [optim_g, optim_d],
-            scaler,
             [train_loader, None],
             [writer_eval],
             cache,
@@ -625,7 +617,6 @@ def train_and_evaluate(
     hps,
     nets,
     optims,
-    scaler,
     loaders,
     writers,
     cache,
@@ -645,7 +636,6 @@ def train_and_evaluate(
         hps (Namespace): Hyperparameters.
         nets (list): List of models [net_g, net_d].
         optims (list): List of optimizers [optim_g, optim_d].
-        scaler (GradScaler): Gradient scaler for mixed precision training.
         loaders (list): List of dataloaders [train_loader, eval_loader].
         writers (list): List of TensorBoard writers [writer_eval].
         cache (list): List to cache data in GPU memory.
@@ -680,8 +670,8 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
-    epoch_loss_tensor = torch.zeros(6, device=device)
-    multi_epoch_loss_tensor = torch.zeros(6, device=device)
+    epoch_loss_tensor = torch.zeros(5, device=device)
+    multi_epoch_loss_tensor = torch.zeros(5, device=device)
     num_batches_in_epoch = 0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
@@ -691,7 +681,6 @@ def train_and_evaluate(
             elif device.type != "cuda":
                 info = [tensor.to(device) for tensor in info]
             # else iterator is going thru a cached list with a device already assigned
-
             (
                 phone,
                 phone_lengths,
@@ -705,15 +694,14 @@ def train_and_evaluate(
             ) = info
 
             # Forward pass
-            use_amp = config.train.fp16_run and device.type == "cuda"
-            with autocast(enabled=use_amp): # override of precision: dtype=torch.bfloat16
-                model_output = net_g(
-                    phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
-                )
-                y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
-                    model_output
-                )
-                # slice of the original waveform to match a generate slice
+            model_output = net_g(
+                phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
+            )
+            y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
+                model_output
+            )
+            # slice of the original waveform to match a generate slice
+            if randomized:
                 wave = commons.slice_segments(
                     wave,
                     ids_slice * config.data.hop_length,
@@ -721,63 +709,41 @@ def train_and_evaluate(
                     dim=3,
                 )
 
+            # MultiPeriodDiscriminator:
+            y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+            loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-            # Discriminator update   ---------------------------------
 
-                # MPD:
-                y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
-                with autocast(enabled=False):
-                    loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
-
-            # Backpropagation and discriminator optimization:
+            # Discriminator backward and update
             optim_d.zero_grad()
-            scaler.scale(loss_disc).backward()
-            scaler.unscale_(optim_d)
 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=100.0)
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=250.0)
 #            if not math.isfinite(grad_norm_d):
 #                print('grad_norm_d is NaN or Inf')
-
-            scaler.step(optim_d)
-            scaler.update()
+            optim_d.step()
 
 
-            # Generator update   ---------------------------------
+            # Generator backward and update
+            _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
 
-            with autocast(enabled=use_amp): # override of precision: dtype=torch.bfloat16
+            loss_fm = feature_loss(fmap_r, fmap_g)
+            loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
+            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+            loss_gen, _ = generator_loss(y_d_hat_g)
 
-                # Discriminator loss:
-                _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
 
-                with autocast(enabled=False):
-
-                    loss_fm = feature_loss(fmap_r, fmap_g) # Feature matching loss
-                    loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0 # Multi-scale mel spectrogram loss
-                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl # Kullback–Leibler divergence
-
-                    loss_env = envelope_loss(wave, y_hat) # Envelope Matching Loss
-
-                    loss_gen, _ = generator_loss(y_d_hat_g) # Generator's minimax
-
-                    # Summed loss of generator:
-                    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl + loss_env
-
-
-            # Backpropagation and generator optimization:
             optim_g.zero_grad()
-            scaler.scale(loss_gen_all).backward()
-            scaler.unscale_(optim_g)
-
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=100.0)
+            loss_gen_all.backward()
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=250.0)
 #            if not math.isfinite(grad_norm_g):
 #                print('grad_norm_g is NaN or Inf')
-
-            scaler.step(optim_g)
-            scaler.update()
+            optim_g.step()
 
             global_step += 1
             num_batches_in_epoch += 1
             pbar.update(1)
+
 
             # Accumulation of losses in the epoch_loss_tensor:
             epoch_loss_tensor[0].add_(loss_disc)
@@ -785,7 +751,6 @@ def train_and_evaluate(
             epoch_loss_tensor[2].add_(loss_fm)
             epoch_loss_tensor[3].add_(loss_mel)
             epoch_loss_tensor[4].add_(loss_kl)
-            epoch_loss_tensor[5].add_(loss_env)
 
             # Accumulation of losses in the 5_epoch_loss_tensor:
             multi_epoch_loss_tensor[0].add_(loss_disc)
@@ -793,7 +758,6 @@ def train_and_evaluate(
             multi_epoch_loss_tensor[2].add_(loss_fm)
             multi_epoch_loss_tensor[3].add_(loss_mel)
             multi_epoch_loss_tensor[4].add_(loss_kl)
-            multi_epoch_loss_tensor[5].add_(loss_env)
 
     with torch.no_grad():
         torch.cuda.empty_cache()
@@ -810,27 +774,29 @@ def train_and_evaluate(
             config.data.mel_fmin,
             config.data.mel_fmax,
         )
+
         # used for tensorboard chart - slice/mel_org
-        y_mel = commons.slice_segments(
-            mel,
-            ids_slice,
-            config.train.segment_size // config.data.hop_length,
-            dim=3,
-        )
-        # used for tensorboard chart - slice/mel_gen
-        with autocast(enabled=False):
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.float().squeeze(1),
-                config.data.filter_length,
-                config.data.n_mel_channels,
-                config.data.sample_rate,
-                config.data.hop_length,
-                config.data.win_length,
-                config.data.mel_fmin,
-                config.data.mel_fmax,
+        if randomized:
+            y_mel = commons.slice_segments(
+                mel,
+                ids_slice,
+                config.train.segment_size // config.data.hop_length,
+                dim=3,
             )
-            if use_amp:
-                y_hat_mel = y_hat_mel.half()
+        else:
+            y_mel = mel
+
+        # used for tensorboard chart - slice/mel_gen
+        y_hat_mel = mel_spectrogram_torch(
+            y_hat.float().squeeze(1),
+            config.data.filter_length,
+            config.data.n_mel_channels,
+            config.data.sample_rate,
+            config.data.hop_length,
+            config.data.win_length,
+            config.data.mel_fmin,
+            config.data.mel_fmax,
+        )
 
         # Codename;0's tweak / feature  |  Mel similarity metric
         mel_spec_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel) # Calculate
@@ -846,7 +812,6 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
-            writer.add_scalar("loss_avg/env", avg_epoch_loss[5], global_step)
 
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
             epoch_loss_tensor.zero_() # Reset tensor for the next epoch
@@ -859,7 +824,6 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
-            writer.add_scalar("loss_avg_5/env_5", avg_multi_epoch_loss[5], global_step)
 
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
 
@@ -874,7 +838,6 @@ def train_and_evaluate(
 #            "loss/g/fm": loss_fm, # Legacy
 #            "loss/g/mel": loss_mel, # Legacy
 #            "loss/g/kl": loss_kl, # Legacy
-#            "loss/g/env": loss_env, # Legacy
         }
 
         image_dict = {
@@ -911,26 +874,6 @@ def train_and_evaluate(
     done = False
 
     if rank == 0:
-
-        # Extract learning rates from optimizers
-        lr_g = optim_g.param_groups[0]['lr']
-        lr_d = optim_d.param_groups[0]['lr']
-
-        # Check completion
-        if epoch >= custom_total_epoch:
-            print(f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen.")
-
-            pid_file_path = os.path.join(experiment_dir, "config.json")
-            with open(pid_file_path, "r") as pid_file:
-                pid_data = json.load(pid_file)
-            with open(pid_file_path, "w") as pid_file:
-                pid_data.pop("process_pids", None)
-                json.dump(pid_data, pid_file, indent=4)
-
-            # Final model
-            model_add.append(os.path.join(experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"))
-            done = True
-
         # Print training progress
         record = f"{model_name} | epoch={epoch} | step={global_step} | {epoch_recorder.record()}"
         print(record)
@@ -970,19 +913,38 @@ def train_and_evaluate(
                 else net_g.state_dict()
             )
             for m in model_add:
-                if not os.path.exists(m):
-                    extract_model(
-                        ckpt=ckpt,
-                        sr=sample_rate,
-                        pitch_guidance=True,
-                        name=model_name,
-                        model_dir=m,
-                        epoch=epoch,
-                        step=global_step,
-                        version=version,
-                        hps=hps,
-                        vocoder=vocoder,
-                    )
+                if os.path.exists(m):
+                    print(f'{m} already exists. Overwriting.')
+                extract_model(
+                    ckpt=ckpt,
+                    sr=sample_rate,
+                    name=model_name,
+                    model_path=m,
+                    epoch=epoch,
+                    step=global_step,
+                    hps=hps,
+                    vocoder=vocoder,
+                )
+
+        # Check completion
+        if epoch >= custom_total_epoch:
+            print(f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen.")
+
+            pid_file_path = os.path.join(experiment_dir, "config.json")
+            with open(pid_file_path, "r") as pid_file:
+                pid_data = json.load(pid_file)
+            with open(pid_file_path, "w") as pid_file:
+                pid_data.pop("process_pids", None)
+                json.dump(pid_data, pid_file, indent=4)
+
+            # Final model
+            model_add.append(
+                os.path.join(
+                    experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
+                )
+            )
+            done = True
+
         if done:
             os._exit(2333333)
 
