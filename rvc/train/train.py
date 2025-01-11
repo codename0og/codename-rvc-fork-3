@@ -97,7 +97,7 @@ config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.benchmark = True
 
 # Globals
 global_step = 0
@@ -715,7 +715,7 @@ def train_and_evaluate(
 
             # Discriminator backward and update
             optim_d.zero_grad()
-
+            loss_disc.backward()
             grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=250.0)
 #            if not math.isfinite(grad_norm_d):
 #                print('grad_norm_d is NaN or Inf')
