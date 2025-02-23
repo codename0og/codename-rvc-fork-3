@@ -1,0 +1,26 @@
+# Ignore entire folders and files first
+env/
+
+ffprobe.exe
+ffmpeg.exe
+
+assets/audios/
+assets/datasets/
+assets/audios/audio-others/
+logs/
+rvc/models/pretraineds/
+
+# Now un-ignore specific folders and files
+!assets/audios/.gitkeep
+!assets/datasets/.gitkeep
+!assets/audios/audio-others/.gitkeep
+
+!logs/.gitkeep
+!logs/mute/
+!logs/reference/
+!logs/run_tensorboard_in_model_folder.bat
+
+!rvc/models/pretraineds/.gitkeep
+
+!rvc/models/pretraineds/hifi-gan/.gitkeep
+!rvc/models/pretraineds/custom/.gitkeep

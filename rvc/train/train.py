@@ -1,6 +1,9 @@
 import os
 import re
 import sys
+
+os.environ["USE_LIBUV"] = "0" if sys.platform == 'win32' else "1"
+
 import glob
 import json
 import torch
@@ -166,7 +169,7 @@ class EpochRecorder:
 
 
 def verify_checkpoint_shapes(checkpoint_path, model):
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     checkpoint_state_dict = checkpoint["model"]
     try:
         if hasattr(model, "module"):
@@ -351,7 +354,7 @@ def run(
         writer_eval = None
 
     dist.init_process_group(
-        backend="gloo", #"nccl",
+        backend='gloo' if sys.platform == 'win32' or device.type != 'cuda' else 'nccl',
         init_method="env://",
         world_size=n_gpus if device.type == "cuda" else 1,
         rank=rank if device.type == "cuda" else 0,
@@ -414,8 +417,8 @@ def run(
         net_g = net_g.cuda(device_id)
         net_d = net_d.cuda(device_id)
     else:
-        net_g.to(device)
-        net_d.to(device)
+        net_g = net_g.to(device)
+        net_d = net_d.to(device)
 
     optim_g = torch.optim.RAdam(
         net_g.parameters(),
@@ -465,11 +468,11 @@ def run(
                 print(f"Loaded pretrained (G) '{pretrainG}'")
             if hasattr(net_g, "module"):
                 net_g.module.load_state_dict(
-                    torch.load(pretrainG, map_location="cpu")["model"]
+                    torch.load(pretrainG, map_location="cpu", weights_only=True)["model"]
                 )
             else:
                 net_g.load_state_dict(
-                    torch.load(pretrainG, map_location="cpu")["model"]
+                    torch.load(pretrainG, map_location="cpu", weights_only=True)["model"]
                 )
 
 
@@ -479,11 +482,11 @@ def run(
                 print(f"Loaded pretrained (D) '{pretrainD}'")
             if hasattr(net_d, "module"):
                 net_d.module.load_state_dict(
-                    torch.load(pretrainD, map_location="cpu")["model"]
+                    torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
                 )
             else:
                 net_d.load_state_dict(
-                    torch.load(pretrainD, map_location="cpu")["model"]
+                    torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
                 )
 
 

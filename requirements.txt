@@ -30,15 +30,14 @@ torchaudio==2.3.1
 torchvision==0.18.1
 torchcrepe==0.0.23
 torchfcpe
-einops
-libf0
+einop
 transformers==4.44.2
 nnaudio==0.3.3
 
 # Visualization and UI
 matplotlib==3.7.2
 tensorboard
-gradio==5.5.0
+gradio==5.14.0
 
 # Miscellaneous utilities
 certifi>=2023.07.22; sys_platform == 'darwin'  
