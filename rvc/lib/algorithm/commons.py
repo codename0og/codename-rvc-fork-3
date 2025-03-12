@@ -181,15 +181,7 @@ def sequence_mask(length: torch.Tensor, max_length: Optional[int] = None):
     return x.unsqueeze(0) < length.unsqueeze(1)
 
 
-def clip_grad_value(parameters, clip_value, norm_type=2):
-    """
-    Clip the gradients of a list of parameters.
-
-    Args:
-        parameters: The list of parameters to clip.
-        clip_value: The maximum value of the gradients.
-        norm_type: The type of norm to use for clipping.
-    """
+def clip_grad_value_(parameters, clip_value, norm_type=2):
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
     parameters = list(filter(lambda p: p.grad is not None, parameters))
@@ -204,4 +196,41 @@ def clip_grad_value(parameters, clip_value, norm_type=2):
         if clip_value is not None:
             p.grad.data.clamp_(min=-clip_value, max=clip_value)
     total_norm = total_norm ** (1.0 / norm_type)
+    return total_norm
+
+
+def get_total_norm(tensors, norm_type=2.0, error_if_nonfinite=False):
+    """
+    Compute the total norm of an iterable of tensors.
+
+    The norm is computed over the norms of the individual tensors,
+    as if they were concatenated into a single vector.
+
+    Args:
+        tensors (Iterable[Tensor] or Tensor): A single tensor or an iterable of tensors.
+        norm_type (float): The type of norm (e.g., 2.0 for L2 norm, float('inf') for infinity norm).
+        error_if_nonfinite (bool): If True, raise an error if the computed norm is NaN or Inf.
+
+    Returns:
+        Tensor: The total norm as a scalar tensor.
+    """
+    if isinstance(tensors, torch.Tensor):
+        tensors = [tensors]
+
+    tensors = [t for t in tensors if t is not None]
+
+    if len(tensors) == 0:
+        return torch.tensor(0.0)
+
+    norm_type = float(norm_type)
+
+    if norm_type == float('inf'):
+        total_norm = max(t.abs().max() for t in tensors)
+    else:
+        tensor_norms = [t.norm(norm_type) for t in tensors]
+        total_norm = torch.norm(torch.stack(tensor_norms), norm_type)
+
+    if error_if_nonfinite and (torch.isnan(total_norm) or torch.isinf(total_norm)):
+        raise RuntimeError("The total norm is non-finite (NaN or Inf).")
+
     return total_norm

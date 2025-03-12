@@ -672,6 +672,7 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
+    epoch_gradient_tensor = torch.zeros(2, device=device)
     epoch_loss_tensor = torch.zeros(5, device=device)
     multi_epoch_loss_tensor = torch.zeros(5, device=device)
     num_batches_in_epoch = 0
@@ -719,7 +720,14 @@ def train_and_evaluate(
             # Discriminator backward and update
             optim_d.zero_grad()
             loss_disc.backward()
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=250.0)
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000)
+            grad_norm_d_clipped = commons.get_total_norm(
+                [p.grad for p in net_d.parameters() if p.grad is not None],
+                norm_type=2.0,
+                error_if_nonfinite=False
+            )
+            writer.add_scalar("grad_step/norm_d", grad_norm_d, global_step)
+            writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
 #            if not math.isfinite(grad_norm_d):
 #                print('grad_norm_d is NaN or Inf')
             optim_d.step()
@@ -737,7 +745,15 @@ def train_and_evaluate(
 
             optim_g.zero_grad()
             loss_gen_all.backward()
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=250.0)
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000)
+            grad_norm_g_clipped = commons.get_total_norm(
+                [p.grad for p in net_g.parameters() if p.grad is not None],
+                norm_type=2.0,
+                error_if_nonfinite=False
+            )
+
+            writer.add_scalar("grad_step/norm_g", grad_norm_g, global_step)
+            writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
 #            if not math.isfinite(grad_norm_g):
 #                print('grad_norm_g is NaN or Inf')
             optim_g.step()
@@ -746,6 +762,9 @@ def train_and_evaluate(
             num_batches_in_epoch += 1
             pbar.update(1)
 
+            # Accumulation of Gradients in the epoch_gradient_tensor:
+            epoch_gradient_tensor[0].add_(grad_norm_d)
+            epoch_gradient_tensor[1].add_(grad_norm_g)
 
             # Accumulation of losses in the epoch_loss_tensor:
             epoch_loss_tensor[0].add_(loss_disc)
@@ -808,25 +827,31 @@ def train_and_evaluate(
         # After each epoch, calculate and log the average loss:
         if global_step % len(train_loader) == 0:
             avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
-
+            avg_gradient_norm = epoch_gradient_tensor / num_batches_in_epoch
+            #
             writer.add_scalar("loss_avg/discriminator_total", avg_epoch_loss[0], global_step)
             writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[1], global_step)
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
-
+            #
+            writer.add_scalar("grad_avg/norm_d", avg_gradient_norm[0], global_step)
+            writer.add_scalar("grad_avg/norm_g", avg_gradient_norm[1], global_step)
+            #
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
-            epoch_loss_tensor.zero_() # Reset tensor for the next epoch
+            epoch_gradient_tensor.zero_() # Reset tensor for the next epoch - Gradients
+            epoch_loss_tensor.zero_() # Reset tensor for the next epoch - losses
 
         # After every 5th epoch, calculate and log the average loss:
         if epoch % 5 == 0:
             avg_multi_epoch_loss = multi_epoch_loss_tensor / 5
+            #
             writer.add_scalar("loss_avg_5/discriminator_total_5", avg_multi_epoch_loss[0], global_step)
             writer.add_scalar("loss_avg_5/generator_total_5", avg_multi_epoch_loss[1], global_step)
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
-
+            #
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
 
         lr = optim_g.param_groups[0]["lr"]
@@ -835,8 +860,8 @@ def train_and_evaluate(
 #            "loss/g/total": loss_gen_all, # Legacy
 #            "loss/d/total": loss_disc, # Legacy
             "learning_rate": lr,
-            "grad/norm_d": grad_norm_d,
-            "grad/norm_g": grad_norm_g,
+#            "grad/norm_d": grad_norm_d, # Legacy
+#            "grad/norm_g": grad_norm_g, # Legacy
 #            "loss/g/fm": loss_fm, # Legacy
 #            "loss/g/mel": loss_mel, # Legacy
 #            "loss/g/kl": loss_kl, # Legacy
