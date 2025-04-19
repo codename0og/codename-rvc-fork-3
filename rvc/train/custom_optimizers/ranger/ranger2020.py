@@ -149,6 +149,9 @@ class Ranger(Optimizer):
                 if self.gc_loc:
                     grad = centralized_gradient(grad, use_gc=self.use_gc, gc_conv_only=self.gc_conv_only)
 
+                # Store GC-modified gradients before further processing
+                state['gc_grad'] = grad.clone()
+
                 state['step'] += 1
 
                 # compute variance mov avg

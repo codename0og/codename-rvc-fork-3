@@ -2,7 +2,7 @@ import os
 import re
 import sys
 
-os.environ["USE_LIBUV"] = "0" if sys.platform == 'win32' else "1"
+os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
 
 import glob
 import json
@@ -31,8 +31,6 @@ clip_grad_norm_ = torch.nn.utils.clip_grad_norm_
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
-#from accelerate import Accelerator # WIP.
 
 # Custom optimizers:
 now_dir = os.getcwd()
@@ -67,6 +65,8 @@ from rvc.train.process.extract_model import extract_model
 
 from rvc.lib.algorithm import commons
 
+from rvc.train.custom_optimizers.ranger25 import ranger25
+
 # Parse command line arguments
 model_name = sys.argv[1]
 save_every_epoch = int(sys.argv[2])
@@ -84,6 +84,10 @@ warmup_duration = int(sys.argv[13])
 cleanup = strtobool(sys.argv[14])
 vocoder = sys.argv[15]
 use_checkpointing = strtobool(sys.argv[16])
+use_custom_lr = strtobool(sys.argv[17])
+custom_lr_g = float(sys.argv[18])
+custom_lr_d = float(sys.argv[19])
+
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
@@ -108,6 +112,7 @@ global_step = 0
 warmup_epochs = warmup_duration
 warmup_enabled = use_warmup
 warmup_completed = False
+custom_lr_enabled = use_custom_lr
 randomized = True
 
 # --------------------------   Custom functions land in here   --------------------------
@@ -360,7 +365,7 @@ def run(
         rank=rank if device.type == "cuda" else 0,
     )
 
-    torch.manual_seed(9999)
+    torch.manual_seed(config.train.seed)
 
     if torch.cuda.is_available():
         torch.cuda.set_device(device_id)
@@ -420,21 +425,71 @@ def run(
         net_g = net_g.to(device)
         net_d = net_d.to(device)
 
-    optim_g = torch.optim.RAdam(
+    optim_g = ranger25(
         net_g.parameters(),
-        lr = 1e-4, # config.train.learning_rate,
-        betas = (0.8, 0.99), # config.train.betas,
-        eps = 1e-8, # config.train.eps,
+    # Core hparams:
+        lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+        betas = (0.8, 0.99),
+        eps = 1e-9,
         weight_decay=0,
-        decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
+        num_epochs = custom_total_epoch,
+        num_batches_per_epoch = len(train_loader),
+    # Engine settings ( If both are false, AdamW is used):
+        use_madgrad = False,
+        use_radam = True,
+    # Warmup related
+        use_warmup = False,
+        warmdown_active = False,
+        use_cheb = False,
+    # Lookahead:
+        lookahead_active = True,
+    # Normloss:
+        normloss_active = True, # ON
+        normloss_factor = 1e-4,
+    # Softplus:
+        softplus=False,
+    # Adaptive Gradient Clipping:
+        use_adaptive_gradient_clipping = True, # ON
+        agc_clipping_value = 1e-2,
+        agc_eps=1e-3,
+    # Gradient centralization:
+        using_gc = True,
+        gc_conv_only=False,
+    # Gradient normalization:
+        using_normgc=True,
     )
-    optim_d = torch.optim.RAdam(
+    optim_d = ranger25(
         net_d.parameters(),
-        lr = 1e-4, # config.train.learning_rate,
-        betas = (0.8, 0.99), # config.train.betas,
-        eps = 1e-8, # config.train.eps,
+    # Core hparams:
+        lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+        betas = (0.8, 0.99),
+        eps = 1e-9,
         weight_decay=0,
-        decoupled_weight_decay=True, # Matches og RAdam paper + mirrors AdamW's behavior.
+        num_epochs = custom_total_epoch,
+        num_batches_per_epoch = len(train_loader),
+    # Engine settings ( If both are false, AdamW is used):
+        use_madgrad = False,
+        use_radam = True,
+    # Warmup related
+        use_warmup = False,
+        warmdown_active = False,
+        use_cheb = False,
+    # Lookahead:
+        lookahead_active = True,
+    # Normloss:
+        normloss_active = True, # ON
+        normloss_factor = 1e-4,
+    # Softplus:
+        softplus=False,
+    # Adaptive Gradient Clipping:
+        use_adaptive_gradient_clipping = True, # ON
+        agc_clipping_value = 1e-2,
+        agc_eps=1e-3,
+    # Gradient centralization:
+        using_gc = True,
+        gc_conv_only=False,
+    # Gradient normalization:
+        using_normgc=True,
     )
 
 
@@ -517,13 +572,17 @@ def run(
 
     # For the decay phase (after warmup)
         # For: Generator
+#    decay_scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=50, eta_min=3e-5)
     decay_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
-        optim_g, gamma=config.train.lr_decay, last_epoch=epoch_str - 1
+        optim_g, gamma=0.995, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
     )
+
         # For: Discriminator
+#    decay_scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=50, eta_min=3e-5)
     decay_scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
-        optim_d, gamma=config.train.lr_decay, last_epoch=epoch_str - 1
+        optim_d, gamma=0.995, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
     )
+
 
     cache = []
     # get the first sample as reference for tensorboard evaluation
@@ -589,6 +648,7 @@ def run(
             device_id,
             reference,
             fn_mel_loss,
+            n_gpus,
         )
 
         if warmup_enabled and epoch <= warmup_epochs:
@@ -628,6 +688,7 @@ def train_and_evaluate(
     device_id,
     reference,
     fn_mel_loss,
+    n_gpus,
 ):
     """
     Trains and evaluates the model for one epoch.
@@ -672,7 +733,6 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
-    epoch_gradient_tensor = torch.zeros(2, device=device)
     epoch_loss_tensor = torch.zeros(5, device=device)
     multi_epoch_loss_tensor = torch.zeros(5, device=device)
     num_batches_in_epoch = 0
@@ -684,6 +744,7 @@ def train_and_evaluate(
             elif device.type != "cuda":
                 info = [tensor.to(device) for tensor in info]
             # else iterator is going thru a cached list with a device already assigned
+
             (
                 phone,
                 phone_lengths,
@@ -717,19 +778,18 @@ def train_and_evaluate(
             loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
 
-            # Discriminator backward and update
+           # Discriminator backward and update
             optim_d.zero_grad()
             loss_disc.backward()
+        # 1. Raw grads logging:
+            grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+            writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
+        # 2. Grad norm clipping: 
             grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000)
-            grad_norm_d_clipped = commons.get_total_norm(
-                [p.grad for p in net_d.parameters() if p.grad is not None],
-                norm_type=2.0,
-                error_if_nonfinite=False
-            )
-            writer.add_scalar("grad_step/norm_d", grad_norm_d, global_step)
+        # 3. Clipped grads logging:
+            grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
-#            if not math.isfinite(grad_norm_d):
-#                print('grad_norm_d is NaN or Inf')
+        # 4. Optimization step:
             optim_d.step()
 
 
@@ -743,28 +803,23 @@ def train_and_evaluate(
 
             loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
 
+
             optim_g.zero_grad()
             loss_gen_all.backward()
+        # 1. Raw grads logging:
+            grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+            writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
+        # 2. Grad norm clipping: 
             grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000)
-            grad_norm_g_clipped = commons.get_total_norm(
-                [p.grad for p in net_g.parameters() if p.grad is not None],
-                norm_type=2.0,
-                error_if_nonfinite=False
-            )
-
-            writer.add_scalar("grad_step/norm_g", grad_norm_g, global_step)
+        # 3. Clipped grads logging:
+            grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
-#            if not math.isfinite(grad_norm_g):
-#                print('grad_norm_g is NaN or Inf')
+        # 4. Optimization step:
             optim_g.step()
+
 
             global_step += 1
             num_batches_in_epoch += 1
-            pbar.update(1)
-
-            # Accumulation of Gradients in the epoch_gradient_tensor:
-            epoch_gradient_tensor[0].add_(grad_norm_d)
-            epoch_gradient_tensor[1].add_(grad_norm_g)
 
             # Accumulation of losses in the epoch_loss_tensor:
             epoch_loss_tensor[0].add_(loss_disc)
@@ -779,6 +834,13 @@ def train_and_evaluate(
             multi_epoch_loss_tensor[2].add_(loss_fm)
             multi_epoch_loss_tensor[3].add_(loss_mel)
             multi_epoch_loss_tensor[4].add_(loss_kl)
+
+            pbar.update(1)
+        # end of batch train
+    # end of tqdm
+
+    if n_gpus > 1 and device.type == 'cuda':
+        dist.barrier()
 
     with torch.no_grad():
         torch.cuda.empty_cache()
@@ -827,7 +889,6 @@ def train_and_evaluate(
         # After each epoch, calculate and log the average loss:
         if global_step % len(train_loader) == 0:
             avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
-            avg_gradient_norm = epoch_gradient_tensor / num_batches_in_epoch
             #
             writer.add_scalar("loss_avg/discriminator_total", avg_epoch_loss[0], global_step)
             writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[1], global_step)
@@ -835,11 +896,7 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
             #
-            writer.add_scalar("grad_avg/norm_d", avg_gradient_norm[0], global_step)
-            writer.add_scalar("grad_avg/norm_g", avg_gradient_norm[1], global_step)
-            #
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
-            epoch_gradient_tensor.zero_() # Reset tensor for the next epoch - Gradients
             epoch_loss_tensor.zero_() # Reset tensor for the next epoch - losses
 
         # After every 5th epoch, calculate and log the average loss:
@@ -854,17 +911,12 @@ def train_and_evaluate(
             #
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
 
-        lr = optim_g.param_groups[0]["lr"]
+        lr_d = optim_d.param_groups[0]["lr"]
+        lr_g = optim_g.param_groups[0]["lr"]
 
         scalar_dict = {
-#            "loss/g/total": loss_gen_all, # Legacy
-#            "loss/d/total": loss_disc, # Legacy
-            "learning_rate": lr,
-#            "grad/norm_d": grad_norm_d, # Legacy
-#            "grad/norm_g": grad_norm_g, # Legacy
-#            "loss/g/fm": loss_fm, # Legacy
-#            "loss/g/mel": loss_mel, # Legacy
-#            "loss/g/kl": loss_kl, # Legacy
+            "learning_rate/lr_d": lr_d,
+            "learning_rate/lr_g": lr_g,
         }
 
         image_dict = {
@@ -932,6 +984,18 @@ def train_and_evaluate(
                         experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
                     )
                 )
+        # Check completion
+        if epoch >= custom_total_epoch:
+            print(
+                f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen."
+            )
+            # Final model
+            model_add.append(
+                os.path.join(
+                    experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
+                )
+            )
+            done = True
 
         if model_add:
             ckpt = (
@@ -941,38 +1005,31 @@ def train_and_evaluate(
             )
             for m in model_add:
                 if os.path.exists(m):
-                    print(f'{m} already exists. Overwriting.')
-                extract_model(
-                    ckpt=ckpt,
-                    sr=sample_rate,
-                    name=model_name,
-                    model_path=m,
-                    epoch=epoch,
-                    step=global_step,
-                    hps=hps,
-                    vocoder=vocoder,
-                )
+                    print(f"{m} already exists, skipping.")
+                else:
+                    extract_model(
+                        ckpt=ckpt,
+                        sr=sample_rate,
+                        name=model_name,
+                        model_path=m,
+                        epoch=epoch,
+                        step=global_step,
+                        hps=hps,
+                        vocoder=vocoder,
+                    )
 
-        # Check completion
-        if epoch >= custom_total_epoch:
-            print(f"Training has been successfully completed with {epoch} epoch, {global_step} steps and {round(loss_gen_all.item(), 3)} loss gen.")
-
+        if done:
+            # Clean-up process IDs from config.json
             pid_file_path = os.path.join(experiment_dir, "config.json")
             with open(pid_file_path, "r") as pid_file:
-                pid_data = json.load(pid_file)
+                try:
+                    pid_data = json.load(pid_file)
+                except json.JSONDecodeError:
+                    pid_data = {}
+
             with open(pid_file_path, "w") as pid_file:
                 pid_data.pop("process_pids", None)
                 json.dump(pid_data, pid_file, indent=4)
-
-            # Final model
-            model_add.append(
-                os.path.join(
-                    experiment_dir, f"{model_name}_{epoch}e_{global_step}s.pth"
-                )
-            )
-            done = True
-
-        if done:
             os._exit(2333333)
 
         with torch.no_grad():

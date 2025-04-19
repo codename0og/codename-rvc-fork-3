@@ -40,7 +40,7 @@ sup_audioext = {
 
 # Custom Pretraineds
 pretraineds_custom_path = os.path.join(
-    now_dir, "rvc", "models", "pretraineds", "pretraineds_custom"
+    now_dir, "rvc", "models", "pretraineds", "custom"
 )
 
 pretraineds_custom_path_relative = os.path.relpath(pretraineds_custom_path, now_dir)
@@ -321,7 +321,7 @@ def train_tab():
                 sampling_rate = gr.Radio(
                     label=i18n("Sampling Rate"),
                     info="The sampling rate of the model you wanna train. \n( If possible, should match your dataset. Small deviations are allowed. )",
-                    choices=["32000", "40000", "44100", "48000"],
+                    choices=["32000", "40000", "48000"],
                     value="48000",
                     interactive=True,
                 )
@@ -500,6 +500,7 @@ def train_tab():
                     "chinese-hubert-base",
                     "japanese-hubert-base",
                     "korean-hubert-base",
+                    "spin",
                     "custom",
                 ],
                 value="contentvec",
@@ -720,6 +721,27 @@ def train_tab():
                             info="Set the maximum number of epochs you want the warmup phase to last for. For small datasets you can try anywhere from 2 to 10. Alternatively, follow the ' 5–10% of the total epochs ' rule ",
                             interactive=True,
                         )
+
+                use_custom_lr = gr.Checkbox(
+                    label="Custom lr for gen and disc",
+                    info="Enables customization of learning rate for Generator and Discriminator.",
+                    value=False,
+                    interactive=True,
+                )
+                with gr.Column(visible=False) as custom_lr_settings:
+                    with gr.Accordion("Custom lr settings"):
+                        custom_lr_g = gr.Textbox(
+                            label="Learning rate for Generator",
+                            placeholder="e.g. 0.0001 or 1e-4",
+                            info="Define the lr for generator. Accepts both decimals and scientific notation i.e. '1e-4'. ",
+                            interactive=True,
+                        )
+                        custom_lr_d = gr.Textbox(
+                            label="Learning rate for Discriminator",
+                            placeholder="e.g. 0.0001 or 1e-4",
+                            info="Define the lr for discriminator. Accepts both decimals and scientific notation i.e. '1e-4'. ",
+                            interactive=True,
+                        )
                 index_algorithm = gr.Radio(
                     label=i18n("Index Algorithm"),
                     info=i18n(
@@ -778,6 +800,9 @@ def train_tab():
                     d_pretrained_path,
                     vocoder,
                     use_checkpointing,
+                    use_custom_lr,
+                    custom_lr_g,
+                    custom_lr_d,
                 ],
                 outputs=[train_output_info],
             )
@@ -899,7 +924,7 @@ def train_tab():
             def toggle_architecture(architecture):
                 if architecture == "Fork/Applio":
                     return {
-                        "choices": ["32000", "40000", "44100", "48000"],
+                        "choices": ["32000", "40000", "48000"],
                         "__type__": "update",
                     }, {
                         "interactive": True,
@@ -987,6 +1012,11 @@ def train_tab():
                 fn=toggle_visible,
                 inputs=[use_warmup],
                 outputs=[warmup_settings],
+            )
+            use_custom_lr.change(
+                fn=toggle_visible,
+                inputs=[use_custom_lr],
+                outputs=[custom_lr_settings],
             )
             multiple_gpu.change(
                 fn=toggle_visible,

@@ -84,3 +84,12 @@ rvc/models/embedders/contentvec/pytorch_model.bin
 rvc/models/predictors/fcpe.pt
 rvc/models/predictors/rmvpe.pt
 rvc/models/embedders/contentvec/config.json
+rvc/train/custom_optimizers/ranger/__pycache__/__init__.cpython-310.pyc
+rvc/train/custom_optimizers/ranger/__pycache__/ranger2020.cpython-310.pyc
+rvc/train/custom_optimizers/ranger/__pycache__/ranger2025.cpython-310.pyc
+rvc/train/custom_optimizers/ranger/__pycache__/ranger913A.cpython-310.pyc
+rvc/train/custom_optimizers/ranger/__pycache__/rangerqh.cpython-310.pyc
+rvc/train/custom_optimizers/ranger25/__pycache__/__init__.cpython-310.pyc
+rvc/train/custom_optimizers/ranger25/__pycache__/ranger25.cpython-310.pyc
+rvc/models/embedders/spin/config.json
+rvc/models/embedders/spin/pytorch_model.bin

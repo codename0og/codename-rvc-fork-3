@@ -512,6 +512,9 @@ def run_train_script(
     d_pretrained_path: str = None,
     vocoder: str = "HiFi-GAN",
     use_checkpointing: bool = False,
+    use_custom_lr: bool = False,
+    custom_lr_g: float = 1e-4,
+    custom_lr_d: float = 1e-4,
 ):
 
     if pretrained == True:
@@ -552,7 +555,10 @@ def run_train_script(
                 warmup_duration,
                 cleanup,
                 vocoder,
-                use_checkpointing
+                use_checkpointing,
+                use_custom_lr,
+                custom_lr_g,
+                custom_lr_d
             ],
         ),
     ]
@@ -784,6 +790,7 @@ def parse_arguments():
             "chinese-hubert-base",
             "japanese-hubert-base",
             "korean-hubert-base",
+            "spin",
             "custom",
         ],
         default="contentvec",
@@ -1299,6 +1306,7 @@ def parse_arguments():
             "chinese-hubert-base",
             "japanese-hubert-base",
             "korean-hubert-base",
+            "spin",
             "custom",
         ],
         default="contentvec",
@@ -1786,6 +1794,7 @@ def parse_arguments():
             "chinese-hubert-base",
             "japanese-hubert-base",
             "korean-hubert-base",
+            "spin",
             "custom",
         ],
         default="contentvec",
@@ -1817,7 +1826,7 @@ def parse_arguments():
         "--sample_rate",
         type=int,
         help="Target sampling rate for the audio data.",
-        choices=[32000, 40000, 44100, 48000],
+        choices=[32000, 40000, 48000],
         required=True,
     )
     preprocess_parser.add_argument(
@@ -1917,7 +1926,7 @@ def parse_arguments():
         "--sample_rate",
         type=int,
         help="Target sampling rate for the audio data.",
-        choices=[32000, 40000, 44100, 48000],
+        choices=[32000, 40000, 48000],
         required=True,
     )
     extract_parser.add_argument(
@@ -1929,6 +1938,7 @@ def parse_arguments():
             "chinese-hubert-base",
             "japanese-hubert-base",
             "korean-hubert-base",
+            "spin",
             "custom",
         ],
         default="contentvec",
@@ -1966,6 +1976,20 @@ def parse_arguments():
         choices=[True, False],
         help="Enables usage of checkpointing.",
         default=False,
+        required=False,
+    )
+    train_parser.add_argument(
+        "--custom_lr_g",
+        type=float,
+        help="Custom learning rate for generator.",
+        default=1e-4,
+        required=False,
+    )
+    train_parser.add_argument(
+        "--custom_lr_d",
+        type=float,
+        help="Custom learning rate for discriminator.",
+        default=1e-4,
         required=False,
     )
     train_parser.add_argument(
@@ -2057,6 +2081,13 @@ def parse_arguments():
         help="Duration of warmup phase (Measured in epochs).",
         choices=range(1, 100),
         default=10,
+    )
+    train_parser.add_argument(
+        "--use_custom_lr",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Enables customization of learning rate for Generator and Discriminator.",
+        default=False,
     )
     train_parser.add_argument(
         "--cleanup",
@@ -2389,6 +2420,9 @@ def main():
                 d_pretrained_path=args.d_pretrained_path,
                 vocoder=args.vocoder,
                 use_checkpointing=args.use_checkpointing,
+                use_custom_lr=args.use_custom_lr,
+                custom_lr_g=args.custom_lr_g,
+                custom_lr_d=args.custom_lr_d,
             )
         elif args.mode == "index":
             run_index_script(
