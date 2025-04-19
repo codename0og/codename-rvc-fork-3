@@ -22,35 +22,34 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- New loss functions: Multi-scale mel spectrogram loss ( optimized ), Envelope loss
-
-- Configurable learning-rate warmup. <br/> ( Provides an ability to give your training a lil warmup, potentially yielding better results. )
-
-- New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 5 epochs to evaluate general trends and the model's performance over time. <br/>` Both work for each metric individually. `
-
-- Features a different optimizer: RAdam ( Rectified Adam ) <br/> ( More init. stability and compared to AdamW, doesn't require using / configuring warmup. ) <br/> ` Most likely better convergence / generalization on average, compared to plain AdamW without a warmup.   `
-  
-- Support for following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN.
-
-- Mel spectrogram % similarity metric.
-
-- SoX resampler in "VHQ" mode used by default in place of "soxr_medium" or "kaiser_best" ( fallback. ).
-
-- Checkpointing and in-place support for both Gen. and Disc. <br/> ( Decreases the vram consumption on cost of the computation / training speed. )
-
-- Customization for preprocessing workflow ( Including 'mute' files usage and various slicing methods. )
-
-<br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and customs ( for now ). ``
+- Support for 'Spin' feature extraction. <br/>` Needs new pretrains `
+ 
+- Features a different optimizer: Ranger25 ( Ranger21 modified by me. ) <br/> ( Instead of AdamW, uses RAdam as it's core. - Doesn't need warmup. ) <br/> ` Typically better convergence / generalization on average, compared to plain AdamW without a warmup.   `
+ 
+- Multi-scale mel spectrogram loss instead of L1. <br/> ` ( Optimized. ) `
+ 
+- Support for following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN. <br/> ` ( And their respective pretrains. ) `
+ 
+- Checkpointing and and various speed / memory optimizations.
+ 
+- New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 5 epochs to evaluate general trends and the model's performance over time.
+ 
+- Ability to choose learning rate for Generator And Discriminator from the ui.
+ 
+- Configurable lr warmup.
+ 
+- Mel spectrogram %-based similarity metric.
+ 
+<br/>``⚠️ 1: HiFi-gan is the stock rvc/applio vocoder, hence it's what you use for og pretrains and hifigan-based customs. ``
 <br/>``⚠️ 2: MRF-HiFi-GAN and Refine-GAN require new pretrained models. They can't be used with original rvc's G/D pretrains. ``
-
-ㅤ
+ <br/>
+ 
+ 
 ✨ to-do list ✨
-> - Ability to switch back to AdamW optimizer ` ( In case someone wants to try it with a warmup. ) `
-> - Adjustable hop length for RMVPE.
-> - Custom initial learning rate per Generator and Discriminator. ` ( Not 100% sure about that just yet. ) ` 
-> - Ability to delay / headstart the Generator or Discriminator.
-> - and more...
+> - Ability to switch between Ranger25, RAdam and AdamW optimizers ` ( Not quite sure whether it's worth it yet. ) `
+> - and potentially more...
 
+ 
 ### ❗ For contact, please use AI HUB by Weights discord server ❗
 
 
