@@ -85,9 +85,17 @@ cleanup = strtobool(sys.argv[14])
 vocoder = sys.argv[15]
 use_checkpointing = strtobool(sys.argv[16])
 use_custom_lr = strtobool(sys.argv[17])
-custom_lr_g = float(sys.argv[18])
-custom_lr_d = float(sys.argv[19])
 
+if use_custom_lr:
+    try:
+        custom_lr_g = float(sys.argv[18])
+        custom_lr_d = float(sys.argv[19])
+    except (IndexError, ValueError):
+        print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
+        sys.exit(1)
+else:
+    custom_lr_g = None
+    custom_lr_d = None
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
