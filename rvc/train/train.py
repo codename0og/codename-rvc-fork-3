@@ -32,7 +32,6 @@ clip_grad_norm_ = torch.nn.utils.clip_grad_norm_
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-# Custom optimizers:
 now_dir = os.getcwd()
 sys.path.append(os.path.join(now_dir))
 
@@ -65,6 +64,7 @@ from rvc.train.process.extract_model import extract_model
 
 from rvc.lib.algorithm import commons
 
+# Custom optimizers:
 from rvc.train.custom_optimizers.ranger25 import ranger25
 
 # Parse command line arguments
@@ -793,7 +793,7 @@ def train_and_evaluate(
             grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000)
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999)
         # 3. Clipped grads logging:
             grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
@@ -818,7 +818,7 @@ def train_and_evaluate(
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000)
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=999999)
         # 3. Clipped grads logging:
             grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
@@ -830,18 +830,18 @@ def train_and_evaluate(
             num_batches_in_epoch += 1
 
             # Accumulation of losses in the epoch_loss_tensor:
-            epoch_loss_tensor[0].add_(loss_disc)
-            epoch_loss_tensor[1].add_(loss_gen_all)
-            epoch_loss_tensor[2].add_(loss_fm)
-            epoch_loss_tensor[3].add_(loss_mel)
-            epoch_loss_tensor[4].add_(loss_kl)
+            epoch_loss_tensor[0].add_(loss_disc.detach())
+            epoch_loss_tensor[1].add_(loss_gen_all.detach())
+            epoch_loss_tensor[2].add_(loss_fm.detach())
+            epoch_loss_tensor[3].add_(loss_mel.detach())
+            epoch_loss_tensor[4].add_(loss_kl.detach())
 
-            # Accumulation of losses in the 5_epoch_loss_tensor:
-            multi_epoch_loss_tensor[0].add_(loss_disc)
-            multi_epoch_loss_tensor[1].add_(loss_gen_all)
-            multi_epoch_loss_tensor[2].add_(loss_fm)
-            multi_epoch_loss_tensor[3].add_(loss_mel)
-            multi_epoch_loss_tensor[4].add_(loss_kl)
+            # Accumulation of losses in the multi_epoch_loss_tensor:
+            multi_epoch_loss_tensor[0].add_(loss_disc.detach())
+            multi_epoch_loss_tensor[1].add_(loss_gen_all.detach())
+            multi_epoch_loss_tensor[2].add_(loss_fm.detach())
+            multi_epoch_loss_tensor[3].add_(loss_mel.detach())
+            multi_epoch_loss_tensor[4].add_(loss_kl.detach())
 
             pbar.update(1)
         # end of batch train
