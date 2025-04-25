@@ -19,7 +19,10 @@ pretraineds_hifigan_list = [
     )
 ]
 models_list = [("predictors/", ["rmvpe.pt", "fcpe.pt"])]
-embedders_list = [("embedders/contentvec/", ["pytorch_model.bin", "config.json"])]
+embedders_list = [
+    ("embedders/contentvec/", ["pytorch_model.bin", "config.json"]),
+    ("embedders/spin/", ["pytorch_model.bin", "config.json"], "https://huggingface.co/Aznamir/spin/resolve/main")
+]
 executables_list = [
     ("", ["ffmpeg.exe", "ffprobe.exe"]),
 ]
@@ -27,6 +30,7 @@ executables_list = [
 folder_mapping_list = {
     "pretrained_v2/": "rvc/models/pretraineds/hifi-gan/",
     "embedders/contentvec/": "rvc/models/embedders/contentvec/",
+    "embedders/spin/": "rvc/models/embedders/spin/",
     "predictors/": "rvc/models/predictors/",
     "formant/": "rvc/models/formant/",
 }
@@ -35,17 +39,29 @@ folder_mapping_list = {
 def get_file_size_if_missing(file_list):
     """
     Calculate the total size of files to be downloaded only if they do not exist locally.
+    Supports optional third element (custom base URL) in the tuple.
     """
     total_size = 0
-    for remote_folder, files in file_list:
+    for entry in file_list:
+        if len(entry) == 2:
+            remote_folder, files = entry
+            base_url = url_base
+        else:
+            remote_folder, files, base_url = entry
+
         local_folder = folder_mapping_list.get(remote_folder, "")
         for file in files:
             destination_path = os.path.join(local_folder, file)
             if not os.path.exists(destination_path):
-                url = f"{url_base}/{remote_folder}{file}"
+                # Construct URL depending on whether it's using the shared base or custom one
+                if base_url == url_base:
+                    url = f"{base_url}/{remote_folder}{file}"
+                else:
+                    url = f"{base_url}/{file}"
                 response = requests.head(url)
                 total_size += int(response.headers.get("content-length", 0))
     return total_size
+
 
 
 def download_file(url, destination_path, global_bar):
@@ -69,15 +85,25 @@ def download_mapping_files(file_mapping_list, global_bar):
     """
     Download all files in the provided file mapping list using a thread pool executor,
     and update the global progress bar as downloads progress.
+    Supports optional third element (custom base URL) in the tuple.
     """
     with ThreadPoolExecutor() as executor:
         futures = []
-        for remote_folder, file_list in file_mapping_list:
+        for entry in file_mapping_list:
+            if len(entry) == 2:
+                remote_folder, file_list = entry
+                base_url = url_base
+            else:
+                remote_folder, file_list, base_url = entry
+
             local_folder = folder_mapping_list.get(remote_folder, "")
             for file in file_list:
                 destination_path = os.path.join(local_folder, file)
                 if not os.path.exists(destination_path):
-                    url = f"{url_base}/{remote_folder}{file}"
+                    if base_url == url_base:
+                        url = f"{base_url}/{remote_folder}{file}"
+                    else:
+                        url = f"{base_url}/{file}"
                     futures.append(
                         executor.submit(
                             download_file, url, destination_path, global_bar
@@ -85,6 +111,7 @@ def download_mapping_files(file_mapping_list, global_bar):
                     )
         for future in futures:
             future.result()
+
 
 
 def split_pretraineds(pretrained_list):
