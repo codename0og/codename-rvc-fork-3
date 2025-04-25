@@ -22,7 +22,7 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Support for 'Spin' feature extraction. <br/>` Needs new pretrains `
+- Support for 'Spin' feature extraction. <br/>` Needs new pretrains, not usable yet. `
  
 - Features a different optimizer: Ranger25 ( Ranger21 modified by me. ) <br/> ( Instead of AdamW, uses RAdam as it's core. - Doesn't need warmup. ) <br/> ` Typically better convergence / generalization on average, compared to plain AdamW without a warmup.   `
  
