@@ -16,7 +16,7 @@ def generate_config(sample_rate: int, model_path: str):
 
 
 def generate_filelist(
-    model_path: str, sample_rate: int, include_mutes: int = 2
+    model_path: str, sample_rate: int, include_mutes: int = 2, embedder_model: str = "contentvec"
 ):
     gt_wavs_dir = os.path.join(model_path, "sliced_audios")
     feature_dir = os.path.join(model_path, f"extracted")
@@ -33,8 +33,12 @@ def generate_filelist(
     names = gt_wavs_files & feature_files & f0_files & f0nsf_files
 
     options = []
-    mute_base_path = os.path.join(current_directory, "logs", "mute")
+
+    mute_folder = "mute" if embedder_model == "contentvec" else "mute_spin"
+    mute_base_path = os.path.join(current_directory, "logs", mute_folder)
+
     sids = []
+
     for name in names:
         sid = name.split("_")[0]
         if sid not in sids:

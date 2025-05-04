@@ -289,6 +289,7 @@ def tts_tab():
                 info=i18n("Model used for learning speaker embedding."),
                 choices=[
                     "contentvec",
+                    "spin",
                     "chinese-hubert-base",
                     "japanese-hubert-base",
                     "korean-hubert-base",

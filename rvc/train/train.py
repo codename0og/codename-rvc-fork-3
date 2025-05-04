@@ -452,7 +452,7 @@ def run(
     # Lookahead:
         lookahead_active = True,
     # Normloss:
-        normloss_active = True, # ON
+        normloss_active = False, # ON
         normloss_factor = 1e-4,
     # Softplus:
         softplus=False,
@@ -485,7 +485,7 @@ def run(
     # Lookahead:
         lookahead_active = True,
     # Normloss:
-        normloss_active = True, # ON
+        normloss_active = False, # ON
         normloss_factor = 1e-4,
     # Softplus:
         softplus=False,
