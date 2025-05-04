@@ -17,6 +17,7 @@ rvc/models/pretraineds/
 
 !logs/.gitkeep
 !logs/mute/
+!logs/mute_spin/
 !logs/reference/
 !logs/run_tensorboard_in_model_folder.bat
 
