@@ -298,6 +298,7 @@ class Pipeline:
             elif method == "fcpe":
                 self.model_fcpe = FCPEF0Predictor(
                     os.path.join("rvc", "models", "predictors", "fcpe.pt"),
+                    hop_length=hop_length,
                     f0_min=int(f0_min),
                     f0_max=int(f0_max),
                     dtype=torch.float32,
@@ -367,6 +368,22 @@ class Pipeline:
             f0 = self.model_fcpe.compute_f0(x, p_len=p_len)
             del self.model_fcpe
             gc.collect()
+
+        elif f0_method == "fumi_fcpe":
+            if not hasattr(self, "model_fumi_fcpe"):
+                from rvc.lib.predictors.fumi_fcpe import FCPE
+
+                self.model_fumi_fcpe = FCPE(
+                    self.window,
+                    int(self.f0_min),
+                    int(self.f0_max),
+                    self.sample_rate,
+                    self.device,
+                )
+                f0 = self.model_fumi_fcpe.compute_f0(x, p_len=x.shape[0] // self.window)
+                del self.model_fumi_fcpe
+                gc.collect()
+
         elif "hybrid" in f0_method:
             input_audio_path2wav[input_audio_path] = x.astype(np.double)
             f0 = self.get_f0_hybrid(
