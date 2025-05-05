@@ -94,3 +94,6 @@ rvc/train/custom_optimizers/ranger25/__pycache__/__init__.cpython-310.pyc
 rvc/train/custom_optimizers/ranger25/__pycache__/ranger25.cpython-310.pyc
 rvc/models/embedders/spin/config.json
 rvc/models/embedders/spin/pytorch_model.bin
+rvc/lib/predictors/fumi_fcpe/__pycache__/fcpe.cpython-310.pyc
+rvc/lib/predictors/fumi_fcpe/__pycache__/f0.cpython-310.pyc
+rvc/lib/predictors/fumi_fcpe/__pycache__/__init__.cpython-310.pyc

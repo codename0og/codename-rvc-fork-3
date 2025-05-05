@@ -49,6 +49,8 @@ class FeatureInput:
             return self.model_rmvpe.infer_from_audio(audio_array, thred=0.03)
         elif method == "fcpe":
             return self.model_fcpe.compute_f0(audio_array, p_len=audio_array.shape[0] // self.hop)
+        elif method == "fumi_fcpe":
+            return self.model_fumi_fcpe.compute_f0(audio_array, p_len=audio_array.shape[0] // self.hop) #
 
     def _get_crepe(self, x, hop_length, type):
         audio = torch.from_numpy(x.astype(np.float32)).to(self.device)
@@ -114,6 +116,7 @@ class FeatureInput:
         elif f0_method == "fcpe":
             self.model_fcpe = FCPEF0Predictor(
                 os.path.join("rvc", "models", "predictors", "fcpe.pt"),
+                hop_length=self.hop,
                 f0_min=int(self.f0_min),
                 f0_max=int(self.f0_max),
                 dtype=torch.float32,
@@ -121,6 +124,17 @@ class FeatureInput:
                 sample_rate=self.fs,
                 threshold=0.03,
             )
+        elif f0_method == "fumi_fcpe":
+            if not hasattr(self, "model_fumi_fcpe"):
+                from rvc.lib.predictors.fumi_fcpe import FCPE
+
+                self.model_fumi_fcpe = FCPE(
+                    self.hop,
+                    int(self.f0_min),
+                    int(self.f0_max),
+                    self.fs,
+                    self.device,
+                )
         def worker(file_info):
             self.process_file(file_info, f0_method, hop_length)
 
