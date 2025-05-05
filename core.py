@@ -1899,6 +1899,7 @@ def parse_arguments():
             "crepe",
             "crepe-tiny",
             "rmvpe",
+            "fcpe",
         ],
         default="rmvpe",
     )

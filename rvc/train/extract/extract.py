@@ -19,6 +19,7 @@ import rvc.lib.zluda
 from rvc.lib.utils import load_audio, load_embedding
 from rvc.train.extract.preparing_files import generate_config, generate_filelist
 from rvc.lib.predictors.RMVPE import RMVPE0Predictor
+from rvc.lib.predictors.FCPE import FCPEF0Predictor
 from rvc.configs.config import Config
 
 # Load config
@@ -37,6 +38,7 @@ class FeatureInput:
         self.f0_mel_max = 1127 * np.log(1 + self.f0_max / 700)
         self.device = device
         self.model_rmvpe = None
+        self.model_fcpe = None
 
     def compute_f0(self, audio_array, method, hop_length):
         if method == "crepe":
@@ -45,6 +47,8 @@ class FeatureInput:
             return self._get_crepe(audio_array, hop_length, type="tiny")
         elif method == "rmvpe":
             return self.model_rmvpe.infer_from_audio(audio_array, thred=0.03)
+        elif method == "fcpe":
+            return self.model_fcpe.compute_f0(audio_array, p_len=audio_array.shape[0] // self.hop)
 
     def _get_crepe(self, x, hop_length, type):
         audio = torch.from_numpy(x.astype(np.float32)).to(self.device)
@@ -107,7 +111,16 @@ class FeatureInput:
                 os.path.join("rvc", "models", "predictors", "rmvpe.pt"),
                 device=device,
             )
-
+        elif f0_method == "fcpe":
+            self.model_fcpe = FCPEF0Predictor(
+                os.path.join("rvc", "models", "predictors", "fcpe.pt"),
+                f0_min=int(self.f0_min),
+                f0_max=int(self.f0_max),
+                dtype=torch.float32,
+                device=self.device,
+                sample_rate=self.fs,
+                threshold=0.03,
+            )
         def worker(file_info):
             self.process_file(file_info, f0_method, hop_length)
 
