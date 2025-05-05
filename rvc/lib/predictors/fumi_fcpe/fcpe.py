@@ -35,8 +35,10 @@ class FCPE(F0Predictor):
         p_len: Optional[int] = None,
         filter_radius: Optional[Union[int, float]] = 0.006,
     ):
-        if p_len is None:
-            p_len = wav.shape[0] // self.hop_length
+#        if p_len is None:
+#            p_len = wav.shape[0] // self.hop_length
+        p_len = wav.shape[0] // self.hop_length + 1 if p_len is None else p_len + 1
+
         if not torch.is_tensor(wav):
             wav = torch.from_numpy(wav)
         f0 = (

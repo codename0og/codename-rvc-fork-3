@@ -901,7 +901,7 @@ class FCPEF0Predictor(F0Predictor):
 
     def compute_f0(self, wav, p_len=None):
         x = torch.FloatTensor(wav).to(self.dtype).to(self.device)
-        p_len = x.shape[0] // self.hop_length if p_len is None else p_len
+        p_len = x.shape[0] // self.hop_length + 1 if p_len is None else p_len + 1
         f0 = self.fcpe(x, sr=self.sample_rate, threshold=self.threshold)[0, :, 0]
         if torch.all(f0 == 0):
             return f0.cpu().numpy() if p_len is None else np.zeros(p_len)
@@ -914,7 +914,7 @@ class FCPEF0Predictor(F0Predictor):
 
     def compute_f0_uv(self, wav, p_len=None):
         x = torch.FloatTensor(wav).to(self.dtype).to(self.device)
-        p_len = x.shape[0] // self.hop_length if p_len is None else p_len
+        p_len = x.shape[0] // self.hop_length + 1 if p_len is None else p_len + 1
         f0 = self.fcpe(x, sr=self.sample_rate, threshold=self.threshold)[0, :, 0]
         if torch.all(f0 == 0):
             return f0.cpu().numpy() if p_len is None else np.zeros(p_len), (

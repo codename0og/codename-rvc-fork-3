@@ -380,7 +380,7 @@ class Pipeline:
                     self.sample_rate,
                     self.device,
                 )
-                f0 = self.model_fumi_fcpe.compute_f0(x, p_len=x.shape[0] // self.window)
+                f0 = self.model_fumi_fcpe.compute_f0(x, p_len=p_len)
                 del self.model_fumi_fcpe
                 gc.collect()
 
