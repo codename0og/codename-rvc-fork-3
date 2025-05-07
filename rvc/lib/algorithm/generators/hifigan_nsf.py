@@ -83,6 +83,7 @@ class HiFiGANNSFGenerator(torch.nn.Module):
         gin_channels: int,
         sr: int,
         checkpointing: bool = False,
+        dropout_rate: float = 0.01,
     ):
         super(HiFiGANNSFGenerator, self).__init__()
 
@@ -107,6 +108,8 @@ class HiFiGANNSFGenerator(torch.nn.Module):
             math.prod(upsample_rates[i + 1 :]) if i + 1 < len(upsample_rates) else 1
             for i in range(len(upsample_rates))
         ]
+        
+        self.dropout = torch.nn.Dropout1d(p=dropout_rate) # TEST    # torch.nn.Dropout
 
         for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
             # handling odd upsampling rates
@@ -155,7 +158,7 @@ class HiFiGANNSFGenerator(torch.nn.Module):
 
         self.resblocks = torch.nn.ModuleList(
             [
-                ResBlock(channels[i], k, d)
+                ResBlock(channels[i], k, d, dropout_rate=dropout_rate)
                 for i in range(len(self.ups))
                 for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes)
             ]
@@ -183,6 +186,9 @@ class HiFiGANNSFGenerator(torch.nn.Module):
 
         for i, (ups, noise_convs) in enumerate(zip(self.ups, self.noise_convs)):
             x = torch.nn.functional.leaky_relu(x, self.lrelu_slope)
+            if self.training:
+                x = self.dropout(x)
+
             # Apply upsampling layer
             if self.training and self.checkpointing:
                 x = checkpoint(ups, x, use_reentrant=False)

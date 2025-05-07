@@ -62,6 +62,7 @@ class Synthesizer(torch.nn.Module):
         vocoder: str = "HiFi-GAN",
         randomized: bool = True,
         checkpointing: bool = False,
+        dropout_rate: float = 0.01,
         **kwargs,
     ):
         super().__init__()
@@ -115,6 +116,7 @@ class Synthesizer(torch.nn.Module):
                     gin_channels=gin_channels,
                     sr=sr,
                     checkpointing=checkpointing,
+                    dropout_rate=dropout_rate,
                 )
         else:
             if vocoder == "MRF HiFi-GAN":

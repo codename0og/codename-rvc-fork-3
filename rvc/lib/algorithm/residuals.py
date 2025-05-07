@@ -37,7 +37,7 @@ class ResBlock(torch.nn.Module):
     """
 
     def __init__(
-        self, channels: int, kernel_size: int = 3, dilations: Tuple[int] = (1, 3, 5)
+        self, channels: int, kernel_size: int = 3, dilations: Tuple[int] = (1, 3, 5), dropout_rate: float = 0.01
     ):
         """
         Initializes the ResBlock.
@@ -51,6 +51,7 @@ class ResBlock(torch.nn.Module):
         # Create convolutional layers with specified dilations and initialize weights
         self.convs1 = self._create_convs(channels, kernel_size, dilations)
         self.convs2 = self._create_convs(channels, kernel_size, [1] * len(dilations))
+        self.dropout = torch.nn.Dropout1d(p=dropout_rate)
 
     @staticmethod
     def _create_convs(channels: int, kernel_size: int, dilations: Tuple[int]):
@@ -75,6 +76,10 @@ class ResBlock(torch.nn.Module):
             x = apply_mask(x, x_mask)
             x = torch.nn.functional.leaky_relu(conv1(x), LRELU_SLOPE)
             x = apply_mask(x, x_mask)
+            #############################
+            if self.training:
+                x = self.dropout(x)
+            #############################
             x = conv2(x)
             x = x + x_residual
         return apply_mask(x, x_mask)

@@ -18,7 +18,10 @@ pretraineds_hifigan_list = [
         ],
     )
 ]
-models_list = [("predictors/", ["rmvpe.pt", "fcpe.pt"])]
+models_list = [
+    ("predictors/", ["rmvpe.pt"]),
+    ("predictors/", ["fcpe.pt"], "https://huggingface.co/Codename0/codename-rvc-fork-3-assets/resolve/main/models/predictors/fcpe")
+]
 embedders_list = [
     ("embedders/contentvec/", ["pytorch_model.bin", "config.json"]),
     ("embedders/spin/", ["pytorch_model.bin", "config.json"], "https://huggingface.co/Aznamir/spin/resolve/main")

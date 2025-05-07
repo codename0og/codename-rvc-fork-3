@@ -97,3 +97,15 @@ rvc/models/embedders/spin/pytorch_model.bin
 rvc/lib/predictors/fumi_fcpe/__pycache__/fcpe.cpython-310.pyc
 rvc/lib/predictors/fumi_fcpe/__pycache__/f0.cpython-310.pyc
 rvc/lib/predictors/fumi_fcpe/__pycache__/__init__.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/f02midi/__pycache__/MIDI.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/f02midi/__pycache__/quantization.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/f02midi/__pycache__/transpose.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/f02midi/__pycache__/utils.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/f02midi/__pycache__/featureExtraction.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/mel_extractor.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/model_conformer_naive.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/models.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/models_infer.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/tools.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/torch_interp.cpython-310.pyc
+rvc/lib/predictors/torchfcpe/__pycache__/__init__.cpython-310.pyc

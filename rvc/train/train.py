@@ -121,6 +121,7 @@ warmup_epochs = warmup_duration
 warmup_enabled = use_warmup
 warmup_completed = False
 custom_lr_enabled = use_custom_lr
+dropout_value = 0.0
 randomized = True
 
 # --------------------------   Custom functions land in here   --------------------------
@@ -415,11 +416,12 @@ def run(
         config.data.filter_length // 2 + 1,
         config.train.segment_size // config.data.hop_length,
         **config.model,
-        use_f0=True,
-        sr=sample_rate,
-        vocoder=vocoder,
-        checkpointing=use_checkpointing,
-        randomized=randomized, # noobies
+        use_f0 = True,
+        sr = sample_rate,
+        vocoder = vocoder,
+        checkpointing = use_checkpointing,
+        dropout_rate = dropout_value,
+        randomized = randomized,
     )
 
     net_d = MultiPeriodDiscriminator(
@@ -934,11 +936,14 @@ def train_and_evaluate(
         }
 
         if epoch % save_every_epoch == 0:
+            net_g.eval()
             with torch.no_grad():
                 if hasattr(net_g, "module"):
                     o, *_ = net_g.module.infer(*reference)
                 else:
                     o, *_ = net_g.infer(*reference)
+            net_g.train()
+
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]}
             summarize(
                 writer=writer,

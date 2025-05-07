@@ -486,8 +486,8 @@ def train_tab():
         with gr.Row():
             f0_method = gr.Radio(
                 label=i18n("Pitch extraction algorithm"),
-                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCREPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse but is way lighter on hardware. \n\nFCPE - Fast Context-based Pitch Estimation. \n- Lighter than RMVPE ~ More Real-time friendly. Different behavior for unvoiced elements. \n\nFumi_FCPE - Precisely mirrors fcpe's functionality from fumiama's rvc. \n- Might provide different results from standard FCPE.   \n\n[ CREPE models have adjustable hop length. ]",
-                choices=["crepe", "crepe-tiny", "rmvpe", "fcpe", "fumi_fcpe"],
+                info="Pitch extraction algorithm to use for the audio conversion: \n\nRMVPE - The default algorithm, recommended for most cases; \n- The fastest, very robust to noise. Can tolerate slight harmonies to some degree.  \n\nCREPE - Better suited for truly clean audio where accuracy plays the biggest role; \n- Is slower and way worse in handling noise. Can provide more accurate / softer-ish results. \n\nCREPE-TINY - Smaller / lighter variant of CREPE. \n- Performs worse than 'full' ( standard crepe ) but is way lighter on hardware. \n\nFCPE - Fast Context-based Pitch Estimation. \n- Lighter than RMVPE ~ More Real-time friendly. Different behavior for unvoiced elements. \nCan possibly sound a lil different than RMVPE. \n\n[ CREPE models have adjustable hop length, however it's not recommended to use anything else than 160. ]",
+                choices=["crepe", "crepe-tiny", "rmvpe", "fcpe"],
                 value="rmvpe",
                 interactive=True,
             )
@@ -518,11 +518,11 @@ def train_tab():
         )
         hop_length = gr.Slider(
             1,
-            512,
-            128,
+            480,
+            160,
             step=1,
             label=i18n("Hop Length"),
-            info="Adjustable hop lets you choose the granularity / 'resolution' of pitch extraction. \nSmaller the value, longer the extraction/processing takes. ( Higher the hardware usage. ) \n\nCodename;0 recommends: \n- 32: if the voice is heavy on vibratos \n- 64: For general usage \n- 128/256: For when you want decent/okay accuracy but slightly more robust extraction. ( If your audio isn't perfectly clean yet you still wanna use crepe. )",
+            info="Kept for legacy purposes. Ideally shouldn't be set to anything else than 160 as the rest of f0 methods. )",
             visible=False,
             interactive=True,
         )

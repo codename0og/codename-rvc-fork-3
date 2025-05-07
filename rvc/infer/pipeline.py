@@ -15,7 +15,6 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 
 from rvc.lib.predictors.RMVPE import RMVPE0Predictor
-from rvc.lib.predictors.FCPE import FCPEF0Predictor
 
 import logging
 
@@ -296,17 +295,18 @@ class Pipeline:
                 f0 = self.model_rmvpe.infer_from_audio(x, thred=0.03)
                 f0 = f0[1:]
             elif method == "fcpe":
-                self.model_fcpe = FCPEF0Predictor(
-                    os.path.join("rvc", "models", "predictors", "fcpe.pt"),
-                    hop_length=hop_length,
-                    f0_min=int(f0_min),
-                    f0_max=int(f0_max),
-                    dtype=torch.float32,
-                    device=self.device,
-                    sample_rate=self.sample_rate,
-                    threshold=0.03,
+                if not hasattr(self, "model_fcpe"):
+                    from rvc.lib.predictors.fcpe import FCPE
+
+                    self.model_fcpe = FCPE(
+                        hop_length = hop_length,
+                        f0_min = int(self.f0_min),
+                        f0_max = int(self.f0_max),
+                        sampling_rate = self.sample_rate,
+                        device = self.device,
+                        model_path = os.path.join("rvc", "models", "predictors", "fcpe.pt"),
                 )
-                f0 = self.model_fcpe.compute_f0(x, p_len=p_len)
+                f0 = self.model_fcpe.compute_f0(x, p_len = p_len)
                 del self.model_fcpe
                 gc.collect()
             f0_computation_stack.append(f0)
@@ -356,33 +356,20 @@ class Pipeline:
         elif f0_method == "rmvpe":
             f0 = self.model_rmvpe.infer_from_audio(x, thred=0.03)
         elif f0_method == "fcpe":
-            self.model_fcpe = FCPEF0Predictor(
-                os.path.join("rvc", "models", "predictors", "fcpe.pt"),
-                f0_min=int(self.f0_min),
-                f0_max=int(self.f0_max),
-                dtype=torch.float32,
-                device=self.device,
-                sample_rate=self.sample_rate,
-                threshold=0.03,
+            if not hasattr(self, "model_fcpe"):
+                from rvc.lib.predictors.fcpe import FCPE
+
+                self.model_fcpe = FCPE(
+                    hop_length = hop_length,
+                    f0_min = int(self.f0_min),
+                    f0_max = int(self.f0_max),
+                    sampling_rate = self.sample_rate,
+                    device = self.device,
+                    model_path = os.path.join("rvc", "models", "predictors", "fcpe.pt"),
             )
-            f0 = self.model_fcpe.compute_f0(x, p_len=p_len)
+            f0 = self.model_fcpe.compute_f0(x, p_len = p_len, filter_radius = filter_radius)
             del self.model_fcpe
             gc.collect()
-
-        elif f0_method == "fumi_fcpe":
-            if not hasattr(self, "model_fumi_fcpe"):
-                from rvc.lib.predictors.fumi_fcpe import FCPE
-
-                self.model_fumi_fcpe = FCPE(
-                    self.window,
-                    int(self.f0_min),
-                    int(self.f0_max),
-                    self.sample_rate,
-                    self.device,
-                )
-                f0 = self.model_fumi_fcpe.compute_f0(x, p_len=p_len)
-                del self.model_fumi_fcpe
-                gc.collect()
 
         elif "hybrid" in f0_method:
             input_audio_path2wav[input_audio_path] = x.astype(np.double)

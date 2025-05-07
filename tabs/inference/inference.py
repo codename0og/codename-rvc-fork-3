@@ -889,13 +889,13 @@ def inference_tab():
                 )
                 filter_radius = gr.Slider(
                     minimum=0,
-                    maximum=7,
-                    label=i18n("Filter Radius"),
+                    maximum=1,
+                    label=i18n("Filter Radius / 'threshold' for FCPE"),
                     info=i18n(
-                        "If the number is greater than or equal to three, employing median filtering on the collected tone results has the potential to decrease respiration."
+                        "f0 smoothing / pitch contour filtering \n-Lower values preserve more of the natural variations in the pitch, including subtle pitch shifts and fluctuations. \n( More dynamic, expressive pitch that might better capture natural pitch variation but could also introduce more 'noise' or instability. ) \n \n-Higher values remove more of the fine details and fluctuations in the pitch, resulting in a smoother and more stable pitch curve. \n ( Yet, potentially flatter and innatural sounding sound + loss of fine-details. ) \n \n ( Best to leave it set to the default '0.006', especially if you're unsure of how it works. "
                     ),
-                    value=3,
-                    step=1,
+                    value=0.006,
+                    step=0.001,
                     interactive=True,
                 )
                 index_rate = gr.Slider(
@@ -972,7 +972,6 @@ def inference_tab():
                         "crepe-tiny",
                         "rmvpe",
                         "fcpe",
-                        "fumi_fcpe",
                         "hybrid[rmvpe+fcpe]",
                     ],
                     value="rmvpe",
@@ -1634,7 +1633,6 @@ def inference_tab():
                         "crepe-tiny",
                         "rmvpe",
                         "fcpe",
-                        "fumi_fcpe",
                         "hybrid[rmvpe+fcpe]",
                     ],
                     value="rmvpe",

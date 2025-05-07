@@ -19,7 +19,6 @@ import rvc.lib.zluda
 from rvc.lib.utils import load_audio, load_embedding
 from rvc.train.extract.preparing_files import generate_config, generate_filelist
 from rvc.lib.predictors.RMVPE import RMVPE0Predictor
-from rvc.lib.predictors.FCPE import FCPEF0Predictor
 from rvc.configs.config import Config
 
 # Load config
@@ -38,7 +37,6 @@ class FeatureInput:
         self.f0_mel_max = 1127 * np.log(1 + self.f0_max / 700)
         self.device = device
         self.model_rmvpe = None
-        self.model_fcpe = None
 
     def compute_f0(self, audio_array, method, hop_length):
         if method == "crepe":
@@ -48,9 +46,7 @@ class FeatureInput:
         elif method == "rmvpe":
             return self.model_rmvpe.infer_from_audio(audio_array, thred=0.03)
         elif method == "fcpe":
-            return self.model_fcpe.compute_f0(audio_array, p_len=audio_array.shape[0] // self.hop)
-        elif method == "fumi_fcpe":
-            return self.model_fumi_fcpe.compute_f0(audio_array, p_len=audio_array.shape[0] // self.hop) #
+            return self.model_fcpe.compute_f0(audio_array)
 
     def _get_crepe(self, x, hop_length, type):
         audio = torch.from_numpy(x.astype(np.float32)).to(self.device)
@@ -114,26 +110,16 @@ class FeatureInput:
                 device=device,
             )
         elif f0_method == "fcpe":
-            self.model_fcpe = FCPEF0Predictor(
-                os.path.join("rvc", "models", "predictors", "fcpe.pt"),
-                hop_length=self.hop,
-                f0_min=int(self.f0_min),
-                f0_max=int(self.f0_max),
-                dtype=torch.float32,
-                device=self.device,
-                sample_rate=self.fs,
-                threshold=0.03,
-            )
-        elif f0_method == "fumi_fcpe":
-            if not hasattr(self, "model_fumi_fcpe"):
-                from rvc.lib.predictors.fumi_fcpe import FCPE
+            if not hasattr(self, "model_fcpe"):
+                from rvc.lib.predictors.fcpe import FCPE
 
-                self.model_fumi_fcpe = FCPE(
-                    self.hop,
-                    int(self.f0_min),
-                    int(self.f0_max),
-                    self.fs,
-                    self.device,
+                self.model_fcpe = FCPE(
+                    hop_length = self.hop,
+                    f0_min = int(self.f0_min),
+                    f0_max = int(self.f0_max),
+                    sampling_rate = self.fs,
+                    device = self.device,
+                    model_path = os.path.join("rvc", "models", "predictors", "fcpe.pt"),
                 )
         def worker(file_info):
             self.process_file(file_info, f0_method, hop_length)

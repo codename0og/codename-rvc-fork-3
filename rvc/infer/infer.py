@@ -206,7 +206,7 @@ class VoiceConverter:
         split_audio: bool = False,
         f0_autotune: bool = False,
         f0_autotune_strength: float = 1,
-        filter_radius: int = 3,
+        filter_radius: float = 3.0,
         embedder_model: str = "contentvec",
         embedder_model_custom: str = None,
         clean_audio: bool = False,
@@ -222,7 +222,7 @@ class VoiceConverter:
 
         Args:
             pitch (int): Key for F0 up-sampling.
-            filter_radius (int): Radius for filtering.
+            filter_radius (float): Radius for filtering.
             index_rate (float): Rate for index matching.
             volume_envelope (int): RMS mix rate.
             protect (float): Protection rate for certain audio segments.
