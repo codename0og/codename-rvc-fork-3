@@ -17,7 +17,7 @@
 ## A lil bit more the project:
 
 ### This fork is pretty much my personal take on Applio. ✨
-`Goal of this project is foe mt to have a much more flexible base than mainline rvc.`
+`Goal of this project is for me to have a much more flexible base than mainline rvc.`
 <br/>
 ㅤ
 <br/>
