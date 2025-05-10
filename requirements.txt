@@ -19,6 +19,7 @@ noisereduce
 pedalboard
 stftpitchshift
 flatten-dict==0.4.2
+torch-dct==0.1.6
 
 
 # Machine learning and deep learning

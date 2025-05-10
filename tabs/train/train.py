@@ -623,19 +623,25 @@ def train_tab():
                         value=True,
                         interactive=True,
                     )
-                with gr.Column():
                     cleanup = gr.Checkbox(
                         label=i18n("Fresh Training"),
                         info="Enable this setting only if you are training a new model from scratch or restarting the training. \nWhat it does is essentially deleting all previously generated weights and tensorboard logs. \n\n( For a model you've specified in 'Model name' )",
                         value=False,
                         interactive=True,
                     )
+                with gr.Column():
                     cache_dataset_in_gpu = gr.Checkbox(
                         label=i18n("Cache Dataset in GPU"),
                         info=i18n(
                             "Cache the dataset in GPU memory to speed up the training process. \n NOTE: It is advised to have it turned off \n( Especially if the dataset is large / If you're low on VRAM. ) "
                         ),
                         value=False,
+                        interactive=True,
+                    )
+                    use_multiscale_mel_loss = gr.Checkbox(
+                        label="Use Multi-scale Mel loss function",
+                        info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale. ). \n Extra on L1: The results might be less detailed but this might as well, potentially, mitigate 'metalic voice' effect. \n Tries to mirror mainline rvc results.",
+                        value=True,
                         interactive=True,
                     )
                     use_checkpointing = gr.Checkbox(
@@ -800,6 +806,7 @@ def train_tab():
                     d_pretrained_path,
                     vocoder,
                     use_checkpointing,
+                    use_multiscale_mel_loss,
                     use_custom_lr,
                     custom_lr_g,
                     custom_lr_d,

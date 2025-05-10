@@ -512,9 +512,11 @@ def run_train_script(
     d_pretrained_path: str = None,
     vocoder: str = "HiFi-GAN",
     use_checkpointing: bool = False,
+    use_multiscale_mel_loss: bool = True,
     use_custom_lr: bool = False,
     custom_lr_g: float = 1e-4,
     custom_lr_d: float = 1e-4,
+    
 ):
 
     if pretrained == True:
@@ -556,6 +558,7 @@ def run_train_script(
                 cleanup,
                 vocoder,
                 use_checkpointing,
+                use_multiscale_mel_loss,
                 use_custom_lr,
                 custom_lr_g,
                 custom_lr_d
@@ -2084,6 +2087,13 @@ def parse_arguments():
         default=10,
     )
     train_parser.add_argument(
+        "--use_multiscale_mel_loss",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Lets you switch between a multi-scale mel loss and L1 single-scale loss.",
+        default=True,
+    )
+    train_parser.add_argument(
         "--use_custom_lr",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
@@ -2421,6 +2431,7 @@ def main():
                 d_pretrained_path=args.d_pretrained_path,
                 vocoder=args.vocoder,
                 use_checkpointing=args.use_checkpointing,
+                use_multiscale_mel_loss=args.use_multiscale_mel_loss,
                 use_custom_lr=args.use_custom_lr,
                 custom_lr_g=args.custom_lr_g,
                 custom_lr_d=args.custom_lr_d,

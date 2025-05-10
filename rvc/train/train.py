@@ -22,7 +22,6 @@ from tqdm import tqdm
 import numpy as np
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 
@@ -53,6 +52,7 @@ from losses import (
     feature_loss,
     generator_loss,
     kl_loss,
+    #tm_loss,
 )
 from mel_processing import (
     mel_spectrogram_torch,
@@ -64,10 +64,10 @@ from rvc.train.process.extract_model import extract_model
 
 from rvc.lib.algorithm import commons
 
-# Custom optimizers:
 from rvc.train.custom_optimizers.ranger25 import ranger25
 
-# Parse command line arguments
+# Parse command line arguments start region ===========================
+
 model_name = sys.argv[1]
 save_every_epoch = int(sys.argv[2])
 total_epoch = int(sys.argv[3])
@@ -84,12 +84,12 @@ warmup_duration = int(sys.argv[13])
 cleanup = strtobool(sys.argv[14])
 vocoder = sys.argv[15]
 use_checkpointing = strtobool(sys.argv[16])
-use_custom_lr = strtobool(sys.argv[17])
-
+use_multiscale_mel_loss = strtobool(sys.argv[17])
+use_custom_lr = strtobool(sys.argv[18])
 if use_custom_lr:
     try:
-        custom_lr_g = float(sys.argv[18])
-        custom_lr_d = float(sys.argv[19])
+        custom_lr_g = float(sys.argv[19])
+        custom_lr_d = float(sys.argv[20])
     except (IndexError, ValueError):
         print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
         sys.exit(1)
@@ -97,14 +97,23 @@ else:
     custom_lr_g = None
     custom_lr_d = None
 
+# Parse command line arguments end region ===========================
+
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
 config_save_path = os.path.join(experiment_dir, "config.json")
 dataset_path = os.path.join(experiment_dir, "sliced_audios")
 
-with open(config_save_path, "r") as f:
-    config = json.load(f)
-config = HParams(**config)
+try:
+    with open(config_save_path, "r") as f:
+        config = json.load(f)
+    config = HParams(**config)
+except FileNotFoundError:
+    print(
+        f"Model config file not found at {config_save_path}. Did you run preprocessing and feature extraction steps?"
+    )
+    sys.exit(1)
+
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
 
@@ -116,13 +125,15 @@ torch.backends.cudnn.benchmark = True
 
 # Globals
 global_step = 0
-
 warmup_epochs = warmup_duration
 warmup_enabled = use_warmup
 warmup_completed = False
 custom_lr_enabled = use_custom_lr
-dropout_value = 0.0
+multiscale_mel_loss = use_multiscale_mel_loss #
+
+# Globals ( tweakable )
 randomized = True
+
 
 # --------------------------   Custom functions land in here   --------------------------
 
@@ -149,6 +160,29 @@ def mel_spectrogram_similarity(y_hat_mel, y_mel):
     mel_spec_similarity = mel_spec_similarity.clamp(0.0, 100.0)
 
     return mel_spec_similarity
+
+# Tensorboard flusher
+def flush_writer(writer, rank):
+    """
+    Flush the TensorBoard writer if on rank 0.
+    
+    Args:
+        writer (SummaryWriter): TensorBoard SummaryWriter
+        rank (int): process rank (only rank==0 flushes)
+    """
+    if rank == 0 and writer is not None:
+        writer.flush()
+
+def flush_writer_grad(writer, rank, global_step):
+    """
+    Flush the TensorBoard writer every 10 steps and if on rank 0.
+    Dedicated for per-step gradient norm logging.
+    Args:
+        writer (SummaryWriter): TensorBoard SummaryWriter
+        rank (int): process rank (only rank==0 flushes)
+    """
+    if rank == 0 and writer is not None and global_step % 10 == 0:
+        writer.flush()
 
 
 # --------------------------   Custom functions End here   --------------------------
@@ -208,7 +242,7 @@ def main():
     global gpus
 
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "50000"
+    os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     # Check sample rate
     wavs = glob.glob(
         os.path.join(os.path.join(experiment_dir, "sliced_audios"), "*.wav")
@@ -225,7 +259,7 @@ def main():
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
-        gpus = [int(item) for item in gpus.split('-')]
+        gpus = [int(item) for item in gpus.split("-")]
         n_gpus = len(gpus) 
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -362,13 +396,14 @@ def run(
         print("    ██████  cudnn.deterministic: False  ██████")
 
 
+
     if rank == 0:
         writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
     else:
         writer_eval = None
 
     dist.init_process_group(
-        backend='gloo' if sys.platform == 'win32' or device.type != 'cuda' else 'nccl',
+        backend="gloo" if sys.platform == "win32" or device.type != "cuda" else "nccl",
         init_method="env://",
         world_size=n_gpus if device.type == "cuda" else 1,
         rank=rank if device.type == "cuda" else 0,
@@ -392,6 +427,7 @@ def run(
         train_dataset,
         batch_size * n_gpus,
         [50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
+        #[50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
         num_replicas=n_gpus,
         rank=rank,
         shuffle=True,
@@ -420,7 +456,6 @@ def run(
         sr = sample_rate,
         vocoder = vocoder,
         checkpointing = use_checkpointing,
-        dropout_rate = dropout_value,
         randomized = randomized,
     )
 
@@ -446,7 +481,7 @@ def run(
         num_batches_per_epoch = len(train_loader),
     # Engine settings ( If both are false, AdamW is used):
         use_madgrad = False,
-        use_radam = True,
+        use_radam = True, # If you set it to 'False' stock AdamW core gonna be used.
     # Warmup related
         use_warmup = False,
         warmdown_active = False,
@@ -454,19 +489,19 @@ def run(
     # Lookahead:
         lookahead_active = True,
     # Normloss:
-        normloss_active = False, # ON
+        normloss_active = False, # Most likely not ideal for hifigan.
         normloss_factor = 1e-4,
     # Softplus:
         softplus=False,
     # Adaptive Gradient Clipping:
-        use_adaptive_gradient_clipping = True, # ON
-        agc_clipping_value = 1e-2,
+        use_adaptive_gradient_clipping = True, # Beneficial.
+        agc_clipping_value = 0.01,  # example:  1e-1 (0.1) = loose clip,  1e-2 (0.01) = baseline,  1e-3 (0.001) = Stricter  ~ You get the idea
         agc_eps=1e-3,
     # Gradient centralization:
         using_gc = True,
-        gc_conv_only=False,
+        gc_conv_only=True, # hifigan mainly relies on conv layers except for embedding or nsf module ( not needed for them. ) hence we only use GC on conv layers.
     # Gradient normalization:
-        using_normgc=True,
+        using_normgc=False,  # May conflict with AGC by rescaling gradients unpredictably before clipping.
     )
     optim_d = ranger25(
         net_d.parameters(),
@@ -479,7 +514,7 @@ def run(
         num_batches_per_epoch = len(train_loader),
     # Engine settings ( If both are false, AdamW is used):
         use_madgrad = False,
-        use_radam = True,
+        use_radam = True, # If you set it to 'False' stock AdamW core gonna be used.
     # Warmup related
         use_warmup = False,
         warmdown_active = False,
@@ -487,23 +522,28 @@ def run(
     # Lookahead:
         lookahead_active = True,
     # Normloss:
-        normloss_active = False, # ON
+        normloss_active = False, # Most likely not ideal for hifigan.
         normloss_factor = 1e-4,
     # Softplus:
         softplus=False,
     # Adaptive Gradient Clipping:
-        use_adaptive_gradient_clipping = True, # ON
-        agc_clipping_value = 1e-2,
+        use_adaptive_gradient_clipping = True, # Beneficial.
+        agc_clipping_value = 0.001,  # example:  1e-1 (0.1) = loose clip,  1e-2 (0.01) = baseline,  1e-3 (0.001) = Stricter  ~ You get the idea
         agc_eps=1e-3,
     # Gradient centralization:
         using_gc = True,
-        gc_conv_only=False,
+        gc_conv_only=True, # hifigan mainly relies on conv layers except for embedding or nsf module ( not needed for them. ) hence we only use GC on conv layers.
     # Gradient normalization:
-        using_normgc=True,
+        using_normgc=False,  # May conflict with AGC by rescaling gradients unpredictably before clipping.
     )
 
 
-    fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
+    if multiscale_mel_loss:
+        fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
+        print('Using Multi-Scale Mel loss function')
+    else:
+        fn_mel_loss = torch.nn.L1Loss()
+        print('Using Single-Scale (L1) Mel loss function')
 
     # Wrap models with DDP for multi-gpu processing
     if n_gpus > 1 and device.type == "cuda":
@@ -743,8 +783,8 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
-    epoch_loss_tensor = torch.zeros(5, device=device)
-    multi_epoch_loss_tensor = torch.zeros(5, device=device)
+    epoch_loss_tensor = torch.zeros(6, device=device)
+    multi_epoch_loss_tensor = torch.zeros(6, device=device)
     num_batches_in_epoch = 0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
@@ -795,23 +835,51 @@ def train_and_evaluate(
             grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999)
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=700) #999999
         # 3. Clipped grads logging:
             grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
-        # 4. Optimization step:
+        # 4. flushing every 10 steps
+            flush_writer_grad(writer, rank, global_step)
+        # 5. Optimization step:
             optim_d.step()
 
 
             # Generator backward and update
             _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
 
+            if multiscale_mel_loss:
+                loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
+            else:
+                wave_mel = mel_spectrogram_torch(
+                    wave.float().squeeze(1),
+                    config.data.filter_length,
+                    config.data.n_mel_channels,
+                    config.data.sample_rate,
+                    config.data.hop_length,
+                    config.data.win_length,
+                    config.data.mel_fmin,
+                    config.data.mel_fmax,
+                )
+                y_hat_mel = mel_spectrogram_torch(
+                    y_hat.float().squeeze(1),
+                    config.data.filter_length,
+                    config.data.n_mel_channels,
+                    config.data.sample_rate,
+                    config.data.hop_length,
+                    config.data.win_length,
+                    config.data.mel_fmin,
+                    config.data.mel_fmax,
+                )
+                loss_mel = fn_mel_loss(wave_mel, y_hat_mel) * config.train.c_mel
+
             loss_fm = feature_loss(fmap_r, fmap_g)
-            loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
             loss_gen, _ = generator_loss(y_d_hat_g)
 
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+            #loss_tm = tm_loss(y_hat.squeeze(1), wave.squeeze(1)) * 0.01  # tested:  0.01, 0.02, 0.3   - Generally, not beneficial currently. Too unstable and needs way more testing.
+
+            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl #+ loss_tm
 
 
             optim_g.zero_grad()
@@ -820,11 +888,13 @@ def train_and_evaluate(
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=999999)
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=500) #999999
         # 3. Clipped grads logging:
             grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
-        # 4. Optimization step:
+        # 4. flushing every 10 steps
+            flush_writer_grad(writer, rank, global_step)
+        # 5. Optimization step:
             optim_g.step()
 
 
@@ -837,6 +907,7 @@ def train_and_evaluate(
             epoch_loss_tensor[2].add_(loss_fm.detach())
             epoch_loss_tensor[3].add_(loss_mel.detach())
             epoch_loss_tensor[4].add_(loss_kl.detach())
+            #epoch_loss_tensor[5].add_(loss_tm.detach())
 
             # Accumulation of losses in the multi_epoch_loss_tensor:
             multi_epoch_loss_tensor[0].add_(loss_disc.detach())
@@ -844,6 +915,7 @@ def train_and_evaluate(
             multi_epoch_loss_tensor[2].add_(loss_fm.detach())
             multi_epoch_loss_tensor[3].add_(loss_mel.detach())
             multi_epoch_loss_tensor[4].add_(loss_kl.detach())
+            #multi_epoch_loss_tensor[5].add_(loss_tm.detach())
 
             pbar.update(1)
         # end of batch train
@@ -857,7 +929,6 @@ def train_and_evaluate(
 
     # Logging and checkpointing
     if rank == 0:
-
         # used for tensorboard chart - all/mel
         mel = spec_to_mel_torch(
             spec,
@@ -905,7 +976,9 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
-            #
+            writer.add_scalar("loss_avg/tm", avg_epoch_loss[5], global_step)
+
+            flush_writer(writer, rank)
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
             epoch_loss_tensor.zero_() # Reset tensor for the next epoch - losses
 
@@ -918,7 +991,9 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
-            #
+            writer.add_scalar("loss_avg_5/tm_5", avg_multi_epoch_loss[5], global_step)
+
+            flush_writer(writer, rank)
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
 
         lr_d = optim_d.param_groups[0]["lr"]
@@ -953,6 +1028,7 @@ def train_and_evaluate(
                 audios=audio_dict,
                 audio_sample_rate=config.data.sample_rate,
             )
+            flush_writer(writer, rank)
         else:
             summarize(
                 writer=writer,
@@ -960,6 +1036,7 @@ def train_and_evaluate(
                 images=image_dict,
                 scalars=scalar_dict,
             )
+            flush_writer(writer, rank)
 
     # Save checkpoint
     model_add = []
@@ -1043,6 +1120,11 @@ def train_and_evaluate(
             with open(pid_file_path, "w") as pid_file:
                 pid_data.pop("process_pids", None)
                 json.dump(pid_data, pid_file, indent=4)
+
+            if rank == 0:
+                writer.flush()
+                writer.close()
+
             os._exit(2333333)
 
         with torch.no_grad():
