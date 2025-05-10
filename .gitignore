@@ -12,6 +12,7 @@
 !rvc/models/pretraineds/custom/.gitkeep
 # Files to be ignored  ==========================
 env/
+rollback_cache/
 ffprobe.exe
 ffmpeg.exe
 assets/audios/

@@ -40,11 +40,20 @@ function Backup-Files {
     $backupPath = Join-Path $RollbackDir $folderName
     New-Item -ItemType Directory -Path $backupPath | Out-Null
 
-    # Copy all files except this script and the rollback_cache folder
+    # Copy all files except excluded ones
     Get-ChildItem -Path $ScriptDir -Recurse -File |
         Where-Object {
             $_.FullName -notlike "$RollbackDir*" -and
-            $_.Name       -ne $ThisScript
+            $_.Name -ne $ThisScript -and
+            $_.FullName -notmatch "\\rvc\\models\\" -and
+            $_.FullName -notmatch "\\env\\" -and
+            $_.FullName -notmatch "\\__pycache__\\" -and
+            (
+                $_.FullName -notmatch "\\logs\\" -or
+                $_.FullName -match "\\logs\\(mute|mute_spin|reference)\\"
+            ) -and
+            $_.FullName -notmatch "\\assets\\audios\\" -and
+            $_.FullName -notmatch "\\datasets\\"
         } |
         ForEach-Object {
             $relativePath  = $_.FullName.Substring($ScriptDir.Length).TrimStart('\')
@@ -58,6 +67,7 @@ function Backup-Files {
 
     Write-Host " Backup created: $folderName"
 }
+
 
 function Sync-With-Repo {
     Write-Host ""
