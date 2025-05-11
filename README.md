@@ -26,7 +26,7 @@
  
 - Features a different default optimizer: Ranger25 ( Ranger21 modified by me. ) <br/> ( Instead of AdamW, uses RAdam as it's core. - Doesn't need warmup. ) <br/> ` Typically better convergence / generalization on average, compared to plain AdamW without a warmup.   `
  
-- Allows you to choose Multi-scale mel loss or classic L1. <br/> ` ( Optimized. ) `
+- Allows you to choose Multi-scale mel loss or classic L1. ( from the ui level )<br/> ` ( Optimized. ) `
  
 - Support for following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN. <br/> ` ( And their respective pretrains. ) `
  
