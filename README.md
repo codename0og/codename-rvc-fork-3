@@ -22,11 +22,11 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Support for 'Spin' feature extraction. <br/>` Needs new pretrains, not usable yet. `
+- Support for 'Spin' feature extraction. <br/>` Needs proper pretrains. They are in work. `
  
-- Features a different optimizer: Ranger25 ( Ranger21 modified by me. ) <br/> ( Instead of AdamW, uses RAdam as it's core. - Doesn't need warmup. ) <br/> ` Typically better convergence / generalization on average, compared to plain AdamW without a warmup.   `
+- Features a different default optimizer: Ranger25 ( Ranger21 modified by me. ) <br/> ( Instead of AdamW, uses RAdam as it's core. - Doesn't need warmup. ) <br/> ` Typically better convergence / generalization on average, compared to plain AdamW without a warmup.   `
  
-- Multi-scale mel spectrogram loss instead of L1. <br/> ` ( Optimized. ) `
+- Allows you to choose Multi-scale mel loss or classic L1. <br/> ` ( Optimized. ) `
  
 - Support for following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN. <br/> ` ( And their respective pretrains. ) `
  
@@ -34,7 +34,9 @@
  
 - New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 5 epochs to evaluate general trends and the model's performance over time.
  
-- Ability to choose learning rate for Generator And Discriminator from the ui.
+- Ability to choose learning rate for Generator And Discriminator ( from the ui level ).
+ 
+- Ability to choose an optimizer used in training ( from the ui level ).
  
 - Configurable lr warmup.
  
@@ -46,8 +48,7 @@
  
  
 ✨ to-do list ✨
-> - Ability to switch between Ranger25, RAdam and AdamW optimizers ` ( Not quite sure whether it's worth it yet. ) `
-> - and potentially more...
+> - Thinking of more ideas lol
 
  
 ### ❗ For contact, please use AI HUB by Weights discord server ❗
