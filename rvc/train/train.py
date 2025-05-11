@@ -1013,7 +1013,7 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
-            writer.add_scalar("loss_avg/tm", avg_epoch_loss[5], global_step)
+            #writer.add_scalar("loss_avg/tm", avg_epoch_loss[5], global_step)
 
             flush_writer(writer, rank)
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
@@ -1028,7 +1028,7 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
-            writer.add_scalar("loss_avg_5/tm_5", avg_multi_epoch_loss[5], global_step)
+            #writer.add_scalar("loss_avg_5/tm_5", avg_multi_epoch_loss[5], global_step)
 
             flush_writer(writer, rank)
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
