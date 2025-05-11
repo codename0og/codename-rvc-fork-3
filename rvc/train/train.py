@@ -83,13 +83,14 @@ use_warmup = strtobool(sys.argv[12])
 warmup_duration = int(sys.argv[13])
 cleanup = strtobool(sys.argv[14])
 vocoder = sys.argv[15]
-use_checkpointing = strtobool(sys.argv[16])
-use_multiscale_mel_loss = strtobool(sys.argv[17])
-use_custom_lr = strtobool(sys.argv[18])
+optimizer_choice = sys.argv[16]
+use_checkpointing = strtobool(sys.argv[17])
+use_multiscale_mel_loss = strtobool(sys.argv[18])
+use_custom_lr = strtobool(sys.argv[19])
 if use_custom_lr:
     try:
-        custom_lr_g = float(sys.argv[19])
-        custom_lr_d = float(sys.argv[20])
+        custom_lr_g = float(sys.argv[20])
+        custom_lr_d = float(sys.argv[21])
     except (IndexError, ValueError):
         print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
         sys.exit(1)
@@ -367,7 +368,7 @@ def run(
         config (object): Configuration object containing training parameters.
         device (torch.device): The device to use for training (CPU or GPU).
     """
-    global global_step, warmup_completed
+    global global_step, warmup_completed, optimizer_choice
 
 
     if 'warmup_completed' not in globals():
@@ -395,6 +396,14 @@ def run(
     else:
         print("    ██████  cudnn.deterministic: False  ██████")
 
+    # optimizer checks:
+        # For Ranger25:
+    if optimizer_choice == "Ranger25":
+        print("    ██████  Optimizer used: Ranger25    ██████")
+    elif optimizer_choice == "RAdam":
+        print("    ██████  Optimizer used: RAdam       ██████")
+    elif optimizer_choice == "AdamW":
+        print("    ██████  Optimizer used: AdamW       ██████")
 
 
     if rank == 0:
@@ -470,72 +479,100 @@ def run(
         net_g = net_g.to(device)
         net_d = net_d.to(device)
 
-    optim_g = ranger25(
-        net_g.parameters(),
-    # Core hparams:
-        lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
-        betas = (0.8, 0.99),
-        eps = 1e-9,
-        weight_decay=0,
-        num_epochs = custom_total_epoch,
-        num_batches_per_epoch = len(train_loader),
-    # Engine settings ( If both are false, AdamW is used):
-        use_madgrad = False,
-        use_radam = True, # If you set it to 'False' stock AdamW core gonna be used.
-    # Warmup related
-        use_warmup = False,
-        warmdown_active = False,
-        use_cheb = False,
-    # Lookahead:
-        lookahead_active = True,
-    # Normloss:
-        normloss_active = False, # Most likely not ideal for hifigan.
-        normloss_factor = 1e-4,
-    # Softplus:
-        softplus=False,
-    # Adaptive Gradient Clipping:
-        use_adaptive_gradient_clipping = True, # Beneficial.
-        agc_clipping_value = 0.01,  # example:  1e-1 (0.1) = loose clip,  1e-2 (0.01) = baseline,  1e-3 (0.001) = Stricter  ~ You get the idea
-        agc_eps=1e-3,
-    # Gradient centralization:
-        using_gc = True,
-        gc_conv_only=True, # hifigan mainly relies on conv layers except for embedding or nsf module ( not needed for them. ) hence we only use GC on conv layers.
-    # Gradient normalization:
-        using_normgc=False,  # May conflict with AGC by rescaling gradients unpredictably before clipping.
-    )
-    optim_d = ranger25(
-        net_d.parameters(),
-    # Core hparams:
-        lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
-        betas = (0.8, 0.99),
-        eps = 1e-9,
-        weight_decay=0,
-        num_epochs = custom_total_epoch,
-        num_batches_per_epoch = len(train_loader),
-    # Engine settings ( If both are false, AdamW is used):
-        use_madgrad = False,
-        use_radam = True, # If you set it to 'False' stock AdamW core gonna be used.
-    # Warmup related
-        use_warmup = False,
-        warmdown_active = False,
-        use_cheb = False,
-    # Lookahead:
-        lookahead_active = True,
-    # Normloss:
-        normloss_active = False, # Most likely not ideal for hifigan.
-        normloss_factor = 1e-4,
-    # Softplus:
-        softplus=False,
-    # Adaptive Gradient Clipping:
-        use_adaptive_gradient_clipping = True, # Beneficial.
-        agc_clipping_value = 0.001,  # example:  1e-1 (0.1) = loose clip,  1e-2 (0.01) = baseline,  1e-3 (0.001) = Stricter  ~ You get the idea
-        agc_eps=1e-3,
-    # Gradient centralization:
-        using_gc = True,
-        gc_conv_only=True, # hifigan mainly relies on conv layers except for embedding or nsf module ( not needed for them. ) hence we only use GC on conv layers.
-    # Gradient normalization:
-        using_normgc=False,  # May conflict with AGC by rescaling gradients unpredictably before clipping.
-    )
+        # OPTIMIZER INIT:
+    if optimizer_choice == "Ranger25":
+        optim_g = ranger25(
+            net_g.parameters(),
+        # Core hparams:
+            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+            num_epochs = custom_total_epoch,
+            num_batches_per_epoch = len(train_loader),
+        # Engine settings ( If both are false, AdamW is used):
+            use_madgrad = False,
+            use_radam = True,
+        # EXTRAS level 1:
+            use_warmup = False,
+            warmdown_active = False,
+            use_cheb = False,
+            lookahead_active = True,
+        # EXTRAS level 2:
+            normloss_active = False,
+            normloss_factor = 1e-4,
+            softplus=False,
+            use_adaptive_gradient_clipping = True,
+            agc_clipping_value = 0.01,
+            agc_eps=1e-3,
+            using_gc = True,
+            gc_conv_only=True,
+            using_normgc=False,
+        )
+        optim_d = ranger25(
+            net_d.parameters(),
+        # Core hparams:
+            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+            num_epochs = custom_total_epoch,
+            num_batches_per_epoch = len(train_loader),
+        # Engine settings ( If both are false, AdamW is used):
+            use_madgrad = False,
+            use_radam = True,
+        # EXTRAS level 1:
+            use_warmup = False,
+            warmdown_active = False,
+            use_cheb = False,
+            lookahead_active = True,
+        # EXTRAS level 2:
+            normloss_active = False,
+            normloss_factor = 1e-4,
+            softplus=False,
+            use_adaptive_gradient_clipping = True,
+            agc_clipping_value = 0.01,
+            agc_eps=1e-3,
+            using_gc = True,
+            gc_conv_only=True,
+            using_normgc=False,
+        )
+    elif optimizer_choice == "RAdam":
+        optim_g = torch.optim.RAdam(
+            net_g.parameters(),
+        # Core hparams:
+            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+        )
+        optim_d = torch.optim.RAdam(
+            net_d.parameters(),
+        # Core hparams:
+            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+        )
+    elif optimizer_choice == "AdamW":
+        optim_g = torch.optim.AdamW(
+            net_g.parameters(),
+        # Core hparams:
+            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+        )
+        optim_d = torch.optim.AdamW(
+            net_d.parameters(),
+        # Core hparams:
+            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            betas = (0.8, 0.99),
+            eps = 1e-9,
+            weight_decay=0,
+        )
+
+
 
 
     if multiscale_mel_loss:
@@ -783,8 +820,8 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
-    epoch_loss_tensor = torch.zeros(6, device=device)
-    multi_epoch_loss_tensor = torch.zeros(6, device=device)
+    epoch_loss_tensor = torch.zeros(5, device=device)
+    multi_epoch_loss_tensor = torch.zeros(5, device=device)
     num_batches_in_epoch = 0
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
@@ -835,7 +872,7 @@ def train_and_evaluate(
             grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=700) #999999
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000) #700   |   #999999
         # 3. Clipped grads logging:
             grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
@@ -888,7 +925,7 @@ def train_and_evaluate(
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=500) #999999
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000) #500   |   #999999
         # 3. Clipped grads logging:
             grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)

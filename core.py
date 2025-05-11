@@ -511,6 +511,7 @@ def run_train_script(
     g_pretrained_path: str = None,
     d_pretrained_path: str = None,
     vocoder: str = "HiFi-GAN",
+    optimizer: str = "Ranger25",
     use_checkpointing: bool = False,
     use_multiscale_mel_loss: bool = True,
     use_custom_lr: bool = False,
@@ -557,6 +558,7 @@ def run_train_script(
                 warmup_duration,
                 cleanup,
                 vocoder,
+                optimizer,
                 use_checkpointing,
                 use_multiscale_mel_loss,
                 use_custom_lr,
@@ -1975,6 +1977,13 @@ def parse_arguments():
         default="HiFi-GAN",
     )
     train_parser.add_argument(
+        "--optimizer",
+        type=str,
+        help="Choose an optimizer used in training.",
+        choices=["Ranger25", "RAdam", "AdamW"],
+        default="Ranger25",
+    )
+    train_parser.add_argument(
         "--use_checkpointing",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
@@ -2430,6 +2439,7 @@ def main():
                 g_pretrained_path=args.g_pretrained_path,
                 d_pretrained_path=args.d_pretrained_path,
                 vocoder=args.vocoder,
+                optimizer=args.optimizer,
                 use_checkpointing=args.use_checkpointing,
                 use_multiscale_mel_loss=args.use_multiscale_mel_loss,
                 use_custom_lr=args.use_custom_lr,

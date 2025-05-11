@@ -317,6 +317,14 @@ def train_tab():
                     interactive=True,
                     visible=True,
                 )
+                optimizer = gr.Radio(
+                    label="Architecture",
+                    info="Choose an optimizer used in training. \n- **Ranger25**: Default in my fork and recommended.\n- **RAdam**: If Ranger25 doesn't help for you, try this one.\n- **AdamW**: Use this one if you prefer classic approach used in Applio / RVC. \n ( If you insist on using AdamW, I recommended to pair it with Warmup. ) ",
+                    choices=["Ranger25", "RAdam", "AdamW"],
+                    value="Ranger25",
+                    interactive=True,
+                    visible=True,
+                )
             with gr.Column():
                 sampling_rate = gr.Radio(
                     label=i18n("Sampling Rate"),
@@ -805,6 +813,7 @@ def train_tab():
                     g_pretrained_path,
                     d_pretrained_path,
                     vocoder,
+                    optimizer,
                     use_checkpointing,
                     use_multiscale_mel_loss,
                     use_custom_lr,
