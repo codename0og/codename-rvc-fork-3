@@ -285,10 +285,10 @@ class HiFiGANMRFGenerator(torch.nn.Module):
                 self.upsamples.append(
                     weight_norm(
                         torch.nn.ConvTranspose1d(
-                            upsample_initial_channel // (2**i),
-                            upsample_initial_channel // (2 ** (i + 1)),
-                            kernel_size=k,
-                            stride=u,
+                        upsample_initial_channel // (2**i),
+                        upsample_initial_channel // (2 ** (i + 1)),
+                        kernel_size=k,
+                        stride=u,
                         padding=padding,
                         output_padding=u % 2,
                         )
