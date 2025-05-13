@@ -275,7 +275,7 @@ def save_to_wav2(upload_audio):
 
 
 def delete_outputs():
-    gr.Info(f"Outputs cleared!")
+    gr.Info(f"Inference outputs cleared!")
     for root, _, files in os.walk(audio_root_relative, topdown=False):
         for name in files:
             if name.endswith(tuple(sup_audioext)) and name.__contains__("_output"):
@@ -357,8 +357,8 @@ def inference_tab():
     with gr.Column():
         with gr.Row():
             model_file = gr.Dropdown(
-                label=i18n("Voice Model"),
-                info=i18n("Select the voice model to use for the conversion."),
+                label="Voice Model",
+                info="Select the voice model used for inference.",
                 choices=sorted(names, key=lambda x: extract_model_and_epoch(x)),
                 interactive=True,
                 value=default_weight,
@@ -366,16 +366,16 @@ def inference_tab():
             )
 
             index_file = gr.Dropdown(
-                label=i18n("Index File"),
-                info=i18n("Select the index file to use for the conversion."),
+                label="Index File",
+                info="Select the index file used for inference.",
                 choices=get_indexes(),
                 value=match_index(default_weight) if default_weight else "",
                 interactive=True,
                 allow_custom_value=True,
             )
         with gr.Row():
-            unload_button = gr.Button(i18n("Unload Voice"))
-            refresh_button = gr.Button(i18n("Refresh"))
+            unload_button = gr.Button("Unload the voice model")
+            refresh_button = gr.Button("Refresh models, indexes and audios")
 
             unload_button.click(
                 fn=lambda: (
@@ -393,32 +393,28 @@ def inference_tab():
             )
 
     # Single inference tab
-    with gr.Tab(i18n("Single")):
+    with gr.Tab("Single input infer"):
         with gr.Column():
             upload_audio = gr.Audio(
-                label=i18n("Upload Audio"), type="filepath", editable=False
+                label="Upload Audio", type="filepath", editable=False
             )
             with gr.Row():
                 audio = gr.Dropdown(
-                    label=i18n("Select Audio"),
-                    info=i18n("Select the audio to convert."),
+                    label="Select Audio Input",
+                    info="Select the audio for inference.",
                     choices=sorted(audio_paths),
                     value=audio_paths[0] if audio_paths else "",
                     interactive=True,
                     allow_custom_value=True,
                 )
 
-        with gr.Accordion(i18n("Advanced Settings"), open=False):
+        with gr.Accordion("Advanced Settings for inference", open=False):
             with gr.Column():
-                clear_outputs_infer = gr.Button(
-                    i18n("Clear Outputs (Deletes all audios in assets/audios)")
-                )
+                clear_outputs_infer = gr.Button("Clear '_output' audio files ( infer outputs ) from 'assets/audios' ")
                 output_path = gr.Textbox(
-                    label=i18n("Output Path"),
-                    placeholder=i18n("Enter output path"),
-                    info=i18n(
-                        "The path where the output audio will be saved, by default in assets/audios/output.wav"
-                    ),
+                    label="Path for infer outputs",
+                    placeholder="Provide the path for inference outputs",
+                    info="The path where inference outputs will be saved. \nBy default they land in 'assets/audios' ",
                     value=(
                         output_path_fn(audio_paths[0])
                         if audio_paths
@@ -427,33 +423,29 @@ def inference_tab():
                     interactive=True,
                 )
                 export_format = gr.Radio(
-                    label=i18n("Export Format"),
-                    info=i18n("Select the format to export the audio."),
+                    label="Export Format",
+                    info="Choose the audio export format.",
                     choices=["WAV", "MP3", "FLAC", "OGG", "M4A"],
                     value="WAV",
                     interactive=True,
                 )
                 sid = gr.Dropdown(
-                    label=i18n("Speaker ID"),
-                    info=i18n("Select the speaker ID to use for the conversion."),
+                    label="Speaker ID",
+                    info="Select the speaker ID used for inference. \nApplicable only for multi-speaker models.",
                     choices=get_speakers_id(model_file.value),
                     value=0,
                     interactive=True,
                 )
                 split_audio = gr.Checkbox(
-                    label=i18n("Split Audio"),
-                    info=i18n(
-                        "Split the audio into chunks for inference to obtain better results in some cases."
-                    ),
+                    label="Audio splitting",
+                    info="Splits the audio into chunks ( based on **silence** regions! ). \nCan potentially improve the results.",
                     visible=True,
                     value=False,
                     interactive=True,
                 )
                 autotune = gr.Checkbox(
-                    label=i18n("Autotune"),
-                    info=i18n(
-                        "Apply a soft autotune to your inferences, recommended for singing conversions."
-                    ),
+                    label="Autotuning",
+                    info="Applies the Autotune effect.",
                     visible=True,
                     value=False,
                     interactive=True,
@@ -461,19 +453,15 @@ def inference_tab():
                 autotune_strength = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Autotune Strength"),
-                    info=i18n(
-                        "Set the autotune strength - the more you increase it the more it will snap to the chromatic grid."
-                    ),
+                    label="Strength of autotuning",
+                    info="Autotune effect's strength. \nHigher values snap the pitch more tightly to the chromatic grid.",
                     visible=False,
                     value=1,
                     interactive=True,
                 )
                 clean_audio = gr.Checkbox(
-                    label=i18n("Clean Audio"),
-                    info=i18n(
-                        "Clean your audio output using noise detection algorithms, recommended for speaking audios."
-                    ),
+                    label="Audio cleanup",
+                    info="Cleans your audio using noise detection algorithms, preferable for talking / speech audios.",
                     visible=True,
                     value=False,
                     interactive=True,
@@ -481,35 +469,29 @@ def inference_tab():
                 clean_strength = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Clean Strength"),
-                    info=i18n(
-                        "Set the clean-up level to the audio you want, the more you increase it the more it will clean up, but it is possible that the audio will be more compressed."
-                    ),
+                    label="Strength of cleaning",
+                    info="Set the strenght of cleaning. If you set it too high, the audio might come out muffly or degraded in quality.",
                     visible=False,
-                    value=0.5,
+                    value=0.3,
                     interactive=True,
                 )
                 formant_shifting = gr.Checkbox(
-                    label=i18n("Formant Shifting"),
-                    info=i18n(
-                        "Enable formant shifting. Used for male to female and vice-versa convertions."
-                    ),
+                    label="Formant Shifting",
+                    info="Enables formant shifting. Useful in situations where your model is a female but input is a male ( and vice-versa ).",
                     value=False,
                     visible=True,
                     interactive=True,
                 )
                 post_process = gr.Checkbox(
-                    label=i18n("Post-Process"),
-                    info=i18n("Post-process the audio to apply effects to the output."),
+                    label="Post-Processing",
+                    info="Various audio effects and processing for the audio output.",
                     value=False,
                     interactive=True,
                 )
                 with gr.Row(visible=False) as formant_row:
                     formant_preset = gr.Dropdown(
-                        label=i18n("Browse presets for formanting"),
-                        info=i18n(
-                            "Presets are located in /assets/formant_shift folder"
-                        ),
+                        label="Browse presets for formant shifting",
+                        info="Presets are located in '/assets/formant_shift' folder.",
                         choices=list_json_files(FORMANTSHIFT_DIR),
                         visible=False,
                         interactive=True,
@@ -520,8 +502,8 @@ def inference_tab():
                     )
                 formant_qfrency = gr.Slider(
                     value=1.0,
-                    info=i18n("Default value is 1.0"),
-                    label=i18n("Quefrency for formant shifting"),
+                    info="Controls the quefrency used for formant shifting. Default is 1.0.",
+                    label="Formant Quefrency.",
                     minimum=0.0,
                     maximum=16.0,
                     step=0.1,
@@ -530,8 +512,8 @@ def inference_tab():
                 )
                 formant_timbre = gr.Slider(
                     value=1.0,
-                    info=i18n("Default value is 1.0"),
-                    label=i18n("Timbre for formant shifting"),
+                    info="Adjusts timbre characteristics during formant shifting. Default is 1.0.",
+                    label="Formant Timbre",
                     minimum=0.0,
                     maximum=16.0,
                     step=0.1,
@@ -539,8 +521,8 @@ def inference_tab():
                     interactive=True,
                 )
                 reverb = gr.Checkbox(
-                    label=i18n("Reverb"),
-                    info=i18n("Apply reverb to the audio."),
+                    label="Reverb",
+                    info="Applies reverb to the audio output",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -548,8 +530,8 @@ def inference_tab():
                 reverb_room_size = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Room Size"),
-                    info=i18n("Set the room size of the reverb."),
+                    label="Reverb; Room Size",
+                    info="Set the room size of the reverb.",
                     value=0.5,
                     interactive=True,
                     visible=False,
@@ -558,8 +540,8 @@ def inference_tab():
                 reverb_damping = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Damping"),
-                    info=i18n("Set the damping of the reverb."),
+                    label="Reverb Damping",
+                    info="Set the damping of the reverb.",
                     value=0.5,
                     interactive=True,
                     visible=False,
@@ -568,8 +550,8 @@ def inference_tab():
                 reverb_wet_gain = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Wet Gain"),
-                    info=i18n("Set the wet gain of the reverb."),
+                    label="Reverb; Wet Gain",
+                    info="Set the wet gain of the reverb.",
                     value=0.33,
                     interactive=True,
                     visible=False,
@@ -578,8 +560,8 @@ def inference_tab():
                 reverb_dry_gain = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Dry Gain"),
-                    info=i18n("Set the dry gain of the reverb."),
+                    label="Reverb; Dry Gain",
+                    info="Set the dry gain of the reverb.",
                     value=0.4,
                     interactive=True,
                     visible=False,
@@ -588,8 +570,8 @@ def inference_tab():
                 reverb_width = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Width"),
-                    info=i18n("Set the width of the reverb."),
+                    label="Reverb; Width",
+                    info="Set the width of the reverb.",
                     value=1.0,
                     interactive=True,
                     visible=False,
@@ -598,15 +580,15 @@ def inference_tab():
                 reverb_freeze_mode = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Reverb Freeze Mode"),
-                    info=i18n("Set the freeze mode of the reverb."),
+                    label="Reverb; Freeze Mode",
+                    info="Set the freeze mode of the reverb.",
                     value=0.0,
                     interactive=True,
                     visible=False,
                 )
                 pitch_shift = gr.Checkbox(
-                    label=i18n("Pitch Shift"),
-                    info=i18n("Apply pitch shift to the audio."),
+                    label="Pitch Shift",
+                    info="Enable pitch shifting for the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -614,15 +596,15 @@ def inference_tab():
                 pitch_shift_semitones = gr.Slider(
                     minimum=-12,
                     maximum=12,
-                    label=i18n("Pitch Shift Semitones"),
-                    info=i18n("Set the pitch shift semitones."),
+                    label="Pitch Shift ( Semitones )",
+                    info="Set how many semitones to shift the pitch (up or down).",
                     value=0,
                     interactive=True,
                     visible=False,
                 )
                 limiter = gr.Checkbox(
-                    label=i18n("Limiter"),
-                    info=i18n("Apply limiter to the audio."),
+                    label="Limiter",
+                    info="Apply limiter to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -630,25 +612,24 @@ def inference_tab():
                 limiter_threshold = gr.Slider(
                     minimum=-60,
                     maximum=0,
-                    label=i18n("Limiter Threshold dB"),
-                    info=i18n("Set the limiter threshold dB."),
+                    label="Limiter Threshold dB",
+                    info="Set the limiter's threshold ( decibels ).",
                     value=-6,
                     interactive=True,
                     visible=False,
                 )
-
                 limiter_release_time = gr.Slider(
                     minimum=0.01,
                     maximum=1,
-                    label=i18n("Limiter Release Time"),
-                    info=i18n("Set the limiter release time."),
+                    label="Limiter Release Time",
+                    info="Set the limiter release time.",
                     value=0.05,
                     interactive=True,
                     visible=False,
                 )
                 gain = gr.Checkbox(
-                    label=i18n("Gain"),
-                    info=i18n("Apply gain to the audio."),
+                    label="Gain",
+                    info="Apply gain to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -656,15 +637,15 @@ def inference_tab():
                 gain_db = gr.Slider(
                     minimum=-60,
                     maximum=60,
-                    label=i18n("Gain dB"),
-                    info=i18n("Set the gain dB."),
+                    label="Gain dB",
+                    info="Set the gain ( decibels ).",
                     value=0,
                     interactive=True,
                     visible=False,
                 )
                 distortion = gr.Checkbox(
-                    label=i18n("Distortion"),
-                    info=i18n("Apply distortion to the audio."),
+                    label="Distortion",
+                    info="Apply distortion to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -672,15 +653,15 @@ def inference_tab():
                 distortion_gain = gr.Slider(
                     minimum=-60,
                     maximum=60,
-                    label=i18n("Distortion Gain"),
-                    info=i18n("Set the distortion gain."),
+                    label="Distortion Gain",
+                    info="Set the distortion gain.",
                     value=25,
                     interactive=True,
                     visible=False,
                 )
                 chorus = gr.Checkbox(
-                    label=i18n("chorus"),
-                    info=i18n("Apply chorus to the audio."),
+                    label="chorus",
+                    info="Apply chorus to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -688,8 +669,8 @@ def inference_tab():
                 chorus_rate = gr.Slider(
                     minimum=0,
                     maximum=100,
-                    label=i18n("Chorus Rate Hz"),
-                    info=i18n("Set the chorus rate Hz."),
+                    label="Chorus Rate Hz",
+                    info="Set the chorus rate ( Hertz ).",
                     value=1.0,
                     interactive=True,
                     visible=False,
@@ -698,8 +679,8 @@ def inference_tab():
                 chorus_depth = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("chorus Depth"),
-                    info=i18n("Set the chorus depth."),
+                    label="chorus Depth",
+                    info="Set the chorus depth.",
                     value=0.25,
                     interactive=True,
                     visible=False,
@@ -708,8 +689,8 @@ def inference_tab():
                 chorus_center_delay = gr.Slider(
                     minimum=7,
                     maximum=8,
-                    label=i18n("chorus Center Delay ms"),
-                    info=i18n("Set the chorus center delay ms."),
+                    label="chorus Center Delay ms",
+                    info="Set the chorus center delay ms.",
                     value=7,
                     interactive=True,
                     visible=False,
@@ -718,8 +699,8 @@ def inference_tab():
                 chorus_feedback = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("chorus Feedback"),
-                    info=i18n("Set the chorus feedback."),
+                    label="chorus Feedback",
+                    info="Set the chorus feedback.",
                     value=0.0,
                     interactive=True,
                     visible=False,
@@ -728,15 +709,15 @@ def inference_tab():
                 chorus_mix = gr.Slider(
                     minimum=0,
                     maximum=1,
-                    label=i18n("Chorus Mix"),
-                    info=i18n("Set the chorus mix."),
+                    label="Chorus Mix",
+                    info="Set the chorus mix.",
                     value=0.5,
                     interactive=True,
                     visible=False,
                 )
                 bitcrush = gr.Checkbox(
-                    label=i18n("Bitcrush"),
-                    info=i18n("Apply bitcrush to the audio."),
+                    label="Bitcrush",
+                    info="Apply bitcrush to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -744,15 +725,15 @@ def inference_tab():
                 bitcrush_bit_depth = gr.Slider(
                     minimum=1,
                     maximum=32,
-                    label=i18n("Bitcrush Bit Depth"),
-                    info=i18n("Set the bitcrush bit depth."),
+                    label="Bitcrush Bit Depth",
+                    info="Set the bitcrush bit depth.",
                     value=8,
                     interactive=True,
                     visible=False,
                 )
                 clipping = gr.Checkbox(
-                    label=i18n("Clipping"),
-                    info=i18n("Apply clipping to the audio."),
+                    label="Clipping",
+                    info="Apply clipping to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -760,15 +741,15 @@ def inference_tab():
                 clipping_threshold = gr.Slider(
                     minimum=-60,
                     maximum=0,
-                    label=i18n("Clipping Threshold"),
-                    info=i18n("Set the clipping threshold."),
+                    label="Clipping Threshold",
+                    info="Set the clipping threshold.",
                     value=-6,
                     interactive=True,
                     visible=False,
                 )
                 compressor = gr.Checkbox(
-                    label=i18n("Compressor"),
-                    info=i18n("Apply compressor to the audio."),
+                    label="Compressor",
+                    info="Apply compressor to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -776,8 +757,8 @@ def inference_tab():
                 compressor_threshold = gr.Slider(
                     minimum=-60,
                     maximum=0,
-                    label=i18n("Compressor Threshold dB"),
-                    info=i18n("Set the compressor threshold dB."),
+                    label="Compressor Threshold dB",
+                    info="Set the compressor threshold dB.",
                     value=0,
                     interactive=True,
                     visible=False,
@@ -786,8 +767,8 @@ def inference_tab():
                 compressor_ratio = gr.Slider(
                     minimum=1,
                     maximum=20,
-                    label=i18n("Compressor Ratio"),
-                    info=i18n("Set the compressor ratio."),
+                    label="Compressor Ratio",
+                    info="Set the compressor ratio.",
                     value=1,
                     interactive=True,
                     visible=False,
@@ -796,8 +777,8 @@ def inference_tab():
                 compressor_attack = gr.Slider(
                     minimum=0.0,
                     maximum=100,
-                    label=i18n("Compressor Attack ms"),
-                    info=i18n("Set the compressor attack ms."),
+                    label="Compressor Attack ms",
+                    info="Set the compressor attack ms.",
                     value=1.0,
                     interactive=True,
                     visible=False,
@@ -806,15 +787,15 @@ def inference_tab():
                 compressor_release = gr.Slider(
                     minimum=0.01,
                     maximum=100,
-                    label=i18n("Compressor Release ms"),
-                    info=i18n("Set the compressor release ms."),
+                    label="Compressor Release ms",
+                    info="Set the compressor release ms.",
                     value=100,
                     interactive=True,
                     visible=False,
                 )
                 delay = gr.Checkbox(
-                    label=i18n("Delay"),
-                    info=i18n("Apply delay to the audio."),
+                    label="Delay",
+                    info="Apply delay to the audio.",
                     value=False,
                     interactive=True,
                     visible=False,
@@ -822,8 +803,8 @@ def inference_tab():
                 delay_seconds = gr.Slider(
                     minimum=0.0,
                     maximum=5.0,
-                    label=i18n("Delay Seconds"),
-                    info=i18n("Set the delay seconds."),
+                    label="Delay Seconds",
+                    info="Set the delay seconds.",
                     value=0.5,
                     interactive=True,
                     visible=False,
@@ -832,8 +813,8 @@ def inference_tab():
                 delay_feedback = gr.Slider(
                     minimum=0.0,
                     maximum=1.0,
-                    label=i18n("Delay Feedback"),
-                    info=i18n("Set the delay feedback."),
+                    label="Delay Feedback",
+                    info="Set the delay feedback.",
                     value=0.0,
                     interactive=True,
                     visible=False,
@@ -842,8 +823,8 @@ def inference_tab():
                 delay_mix = gr.Slider(
                     minimum=0.0,
                     maximum=1.0,
-                    label=i18n("Delay Mix"),
-                    info=i18n("Set the delay mix."),
+                    label="Delay Mix",
+                    info="Set the delay mix.",
                     value=0.5,
                     interactive=True,
                     visible=False,

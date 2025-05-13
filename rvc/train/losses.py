@@ -1,6 +1,4 @@
 import torch
-import torch.nn.functional as F
-from torch_dct import dct, idct
 
 def feature_loss(fmap_r, fmap_g):
     """
@@ -90,43 +88,3 @@ def kl_loss(z_p, logs_q, m_p, logs_p, z_mask):
     loss = kl / z_mask.sum()
 
     return loss
-
-
-def tm_loss(
-    gen_audio,
-    real_audio,
-    n_fft=2048,
-    hop_length=480,
-    win_length=2048,
-    lifter_cutoff=30,
-    eps=1e-8
-):
-    window = torch.hann_window(win_length).to(gen_audio.device)
-
-    real_spec = torch.stft(real_audio, n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
-    gen_spec  = torch.stft(gen_audio,  n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
-
-    real_mag = real_spec.abs()
-    gen_mag  = gen_spec.abs()
-
-    # Move frequency axis to last (B, T, F)
-    real_mag = real_mag.transpose(1, 2)
-    gen_mag  = gen_mag.transpose(1, 2)
-
-    # Apply DCT along the last dim (freq)
-    real_ceps = dct(torch.log(real_mag + eps), norm='ortho')
-    gen_ceps  = dct(torch.log(gen_mag  + eps), norm='ortho')
-
-    # Zero out higher quefrency coefficients
-    real_ceps[..., lifter_cutoff:] = 0
-    gen_ceps[...,  lifter_cutoff:] = 0
-
-    # Inverse DCT to get the smoothed envelope
-    real_env = torch.exp(idct(real_ceps, norm='ortho'))
-    gen_env  = torch.exp(idct(gen_ceps,  norm='ortho'))
-
-    # Restore original shape (B, F, T)
-    real_env = real_env.transpose(1, 2)
-    gen_env  = gen_env.transpose(1, 2)
-
-    return F.mse_loss(gen_env, real_env)

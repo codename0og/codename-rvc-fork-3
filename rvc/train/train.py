@@ -52,7 +52,6 @@ from losses import (
     feature_loss,
     generator_loss,
     kl_loss,
-    #tm_loss,
 )
 from mel_processing import (
     mel_spectrogram_torch,
@@ -64,7 +63,9 @@ from rvc.train.process.extract_model import extract_model
 
 from rvc.lib.algorithm import commons
 
-from rvc.train.custom_optimizers.ranger25 import ranger25
+from rvc.train.custom_optimizers.ranger21 import Ranger21
+
+import torch_optimizer # TEST
 
 # Parse command line arguments start region ===========================
 
@@ -397,11 +398,13 @@ def run(
         print("    ██████  cudnn.deterministic: False  ██████")
 
     # optimizer checks:
-        # For Ranger25:
-    if optimizer_choice == "Ranger25":
-        print("    ██████  Optimizer used: Ranger25    ██████")
+        # For Ranger21:
+    if optimizer_choice == "Ranger21":
+        print("    ██████  Optimizer used: Ranger21    ██████")
+        # For RAdam:
     elif optimizer_choice == "RAdam":
         print("    ██████  Optimizer used: RAdam       ██████")
+        # For AdamW:
     elif optimizer_choice == "AdamW":
         print("    ██████  Optimizer used: AdamW       ██████")
 
@@ -480,8 +483,8 @@ def run(
         net_d = net_d.to(device)
 
         # OPTIMIZER INIT:
-    if optimizer_choice == "Ranger25":
-        optim_g = ranger25(
+    if optimizer_choice == "Ranger21":
+        optim_g = Ranger21(
             net_g.parameters(),
         # Core hparams:
             lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
@@ -492,7 +495,6 @@ def run(
             num_batches_per_epoch = len(train_loader),
         # Engine settings ( If both are false, AdamW is used):
             use_madgrad = False,
-            use_radam = True,
         # EXTRAS level 1:
             use_warmup = False,
             warmdown_active = False,
@@ -509,7 +511,7 @@ def run(
             gc_conv_only=True,
             using_normgc=False,
         )
-        optim_d = ranger25(
+        optim_d = Ranger21(
             net_d.parameters(),
         # Core hparams:
             lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
@@ -520,7 +522,6 @@ def run(
             num_batches_per_epoch = len(train_loader),
         # Engine settings ( If both are false, AdamW is used):
             use_madgrad = False,
-            use_radam = True,
         # EXTRAS level 1:
             use_warmup = False,
             warmdown_active = False,
@@ -538,7 +539,7 @@ def run(
             using_normgc=False,
         )
     elif optimizer_choice == "RAdam":
-        optim_g = torch.optim.RAdam(
+        optim_g = torch_optimizer.RAdam(
             net_g.parameters(),
         # Core hparams:
             lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
@@ -546,7 +547,7 @@ def run(
             eps = 1e-9,
             weight_decay=0,
         )
-        optim_d = torch.optim.RAdam(
+        optim_d = torch_optimizer.RAdam(
             net_d.parameters(),
         # Core hparams:
             lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
@@ -661,63 +662,64 @@ def run(
         # For: Generator
 #    decay_scheduler_g = torch.optim.lr_scheduler.CosineAnnealingLR(optim_g, T_max=50, eta_min=3e-5)
     decay_scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
-        optim_g, gamma=0.995, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
+        optim_g, gamma=0.999875, last_epoch=epoch_str - 1  #  ( stock ) 0.999875      ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
     )
 
         # For: Discriminator
 #    decay_scheduler_d = torch.optim.lr_scheduler.CosineAnnealingLR(optim_d, T_max=50, eta_min=3e-5)
     decay_scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
-        optim_d, gamma=0.995, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
+        optim_d, gamma=0.999875, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
     )
 
+    # Reference sample fetching mechanism:
+        # Feel free to customize the path or namings ( make sure to change em in ' if ' block too. )
+    reference_path = os.path.join("logs", "reference")
+    use_custom_ref = all([
+        os.path.isfile(os.path.join(reference_path, "ref_feats.npy")),    # Features
+        os.path.isfile(os.path.join(reference_path, "ref_f0c.npy")),      # Pitch - Coarse
+        os.path.isfile(os.path.join(reference_path, "ref_f0f.npy")),      # Pitch - Float
+    ])
 
     cache = []
-    # get the first sample as reference for tensorboard evaluation
-    # custom reference temporarily disabled
-    if True == False and os.path.isfile(
-        os.path.join("logs", "reference", f"ref{sample_rate}.wav")
-    ):
-        phone = np.load(
-            os.path.join("logs", "reference", f"ref{sample_rate}_feats.npy")
-        )
-        # expanding x2 to match pitch size
-        phone = np.repeat(phone, 2, axis=0)
+
+    if use_custom_ref:
+        print("Using custom reference input from 'logs\reference\'")
+
+        # Load and process
+        phone = np.load(os.path.join(reference_path, "ref_feats.npy"))
+        phone = np.repeat(phone, 2, axis=0)  # Match pitch frame rate
+        pitch = np.load(os.path.join(reference_path, "ref_f0c.npy"))
+        pitchf = np.load(os.path.join(reference_path, "ref_f0f.npy"))
+
+        # Find minimum length
+        min_len = min(len(phone), len(pitch), len(pitchf))
+        
+        # Trim all to same length
+        phone = phone[:min_len]
+        pitch = pitch[:min_len]
+        pitchf = pitchf[:min_len]
+
+        # Convert to tensors
         phone = torch.FloatTensor(phone).unsqueeze(0).to(device)
-        phone_lengths = torch.LongTensor(phone.size(0)).to(device)
-        pitch = np.load(os.path.join("logs", "reference", f"ref{sample_rate}_f0c.npy"))
-        # removed last frame to match features
-        pitch = torch.LongTensor(pitch[:-1]).unsqueeze(0).to(device)
-        pitchf = np.load(os.path.join("logs", "reference", f"ref{sample_rate}_f0f.npy"))
-        # removed last frame to match features
-        pitchf = torch.FloatTensor(pitchf[:-1]).unsqueeze(0).to(device)
-        sid = torch.LongTensor([0]).to(device)
-        reference = (
-            phone,
-            phone_lengths,
-            pitch,
-            pitchf,
-            sid,
-        )
+        phone_lengths = torch.LongTensor([phone.shape[1]]).to(device)
+        pitch = torch.LongTensor(pitch).unsqueeze(0).to(device)
+        pitchf = torch.FloatTensor(pitchf).unsqueeze(0).to(device)
+
+        sid = torch.LongTensor([0]).to(device)  # default speaker
+        reference = (phone, phone_lengths, pitch, pitchf, sid)
+
     else:
-        for info in train_loader:
-            phone, phone_lengths, pitch, pitchf, _, _, _, _, sid = info
-            if device.type == "cuda":
-                reference = (
-                    phone.cuda(device_id, non_blocking=True),
-                    phone_lengths.cuda(device_id, non_blocking=True),
-                    pitch.cuda(device_id, non_blocking=True),
-                    pitchf.cuda(device_id, non_blocking=True),
-                    sid.cuda(device_id, non_blocking=True),
-                )  
-            else:
-                reference = (
-                    phone.to(device),
-                    phone_lengths.to(device),
-                    pitch.to(device),
-                    pitchf.to(device),
-                    sid.to(device),
-                )
-            break
+        print("No custom reference found, perhaps a mistake in filename?")
+        print("[FALLBACK] Using the first batch from train_loader.")
+        info = next(iter(train_loader))
+        phone, phone_lengths, pitch, pitchf, _, _, _, _, sid = info
+        reference = (
+            phone.to(device, non_blocking=True),
+            phone_lengths.to(device, non_blocking=True),
+            pitch.to(device, non_blocking=True),
+            pitchf.to(device, non_blocking=True),
+            sid.to(device, non_blocking=True),
+        )
 
     for epoch in range(epoch_str, total_epoch + 1):
         train_and_evaluate(
@@ -872,7 +874,7 @@ def train_and_evaluate(
             grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=1000) #700   |   #999999
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) #700   |   #999999
         # 3. Clipped grads logging:
             grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
@@ -914,9 +916,7 @@ def train_and_evaluate(
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
             loss_gen, _ = generator_loss(y_d_hat_g)
 
-            #loss_tm = tm_loss(y_hat.squeeze(1), wave.squeeze(1)) * 0.01  # tested:  0.01, 0.02, 0.3   - Generally, not beneficial currently. Too unstable and needs way more testing.
-
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl #+ loss_tm
+            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
 
 
             optim_g.zero_grad()
@@ -925,7 +925,7 @@ def train_and_evaluate(
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
         # 2. Grad norm clipping: 
-            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=1000) #500   |   #999999
+            grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=999999) #500   |   #999999
         # 3. Clipped grads logging:
             grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
@@ -944,7 +944,6 @@ def train_and_evaluate(
             epoch_loss_tensor[2].add_(loss_fm.detach())
             epoch_loss_tensor[3].add_(loss_mel.detach())
             epoch_loss_tensor[4].add_(loss_kl.detach())
-            #epoch_loss_tensor[5].add_(loss_tm.detach())
 
             # Accumulation of losses in the multi_epoch_loss_tensor:
             multi_epoch_loss_tensor[0].add_(loss_disc.detach())
@@ -952,7 +951,6 @@ def train_and_evaluate(
             multi_epoch_loss_tensor[2].add_(loss_fm.detach())
             multi_epoch_loss_tensor[3].add_(loss_mel.detach())
             multi_epoch_loss_tensor[4].add_(loss_kl.detach())
-            #multi_epoch_loss_tensor[5].add_(loss_tm.detach())
 
             pbar.update(1)
         # end of batch train
@@ -1013,7 +1011,6 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
-            #writer.add_scalar("loss_avg/tm", avg_epoch_loss[5], global_step)
 
             flush_writer(writer, rank)
             num_batches_in_epoch = 0 # Reset batches_in_epoch counter
@@ -1028,7 +1025,6 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
-            #writer.add_scalar("loss_avg_5/tm_5", avg_multi_epoch_loss[5], global_step)
 
             flush_writer(writer, rank)
             multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs

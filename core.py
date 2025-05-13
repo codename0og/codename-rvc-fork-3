@@ -511,7 +511,7 @@ def run_train_script(
     g_pretrained_path: str = None,
     d_pretrained_path: str = None,
     vocoder: str = "HiFi-GAN",
-    optimizer: str = "Ranger25",
+    optimizer: str = "AdamW",
     use_checkpointing: bool = False,
     use_multiscale_mel_loss: bool = True,
     use_custom_lr: bool = False,
@@ -1980,8 +1980,8 @@ def parse_arguments():
         "--optimizer",
         type=str,
         help="Choose an optimizer used in training.",
-        choices=["Ranger25", "RAdam", "AdamW"],
-        default="Ranger25",
+        choices=["AdamW", "RAdam", "Ranger21"],
+        default="AdamW",
     )
     train_parser.add_argument(
         "--use_checkpointing",

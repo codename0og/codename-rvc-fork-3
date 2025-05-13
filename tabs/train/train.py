@@ -319,9 +319,9 @@ def train_tab():
                 )
                 optimizer = gr.Radio(
                     label="Architecture",
-                    info="Choose an optimizer used in training. \n- **Ranger25**: Default in my fork and recommended.\n- **RAdam**: If Ranger25 doesn't help for you, try this one.\n- **AdamW**: Use this one if you prefer classic approach used in Applio / RVC. \n ( If you insist on using AdamW, I recommended to pair it with Warmup. ) ",
-                    choices=["Ranger25", "RAdam", "AdamW"],
-                    value="Ranger25",
+                    info="Choose an optimizer used in training. \n- **AdamW**: Default.\n- **RAdam**: If AdamW doesn't help for you, try this one.\n- **Ranger21**: Use this one if you know what you're doing. \n ( Only for advanced users. ) ",
+                    choices=["AdamW", "RAdam", "Ranger21"],
+                    value="AdamW",
                     interactive=True,
                     visible=True,
                 )
@@ -417,7 +417,7 @@ def train_tab():
             with gr.Row():
                 chunk_len = gr.Slider(
                     0.5,
-                    5.0,
+                    30.0,
                     3.0,
                     step=0.1,
                     label="Chunk length (sec)",

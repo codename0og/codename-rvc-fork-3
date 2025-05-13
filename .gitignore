@@ -31,3 +31,5 @@ rvc/models/embedders/contentvec/config.json
 
 *.pyc
 EXTRAS/slice_old_excluded_from_repo.py
+rvc/train/train — newest but just harm residue loss enabled.py
+rvc/train/losses — kopia extra losses, temp.py
