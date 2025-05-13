@@ -6,6 +6,7 @@
 !logs/mute/
 !logs/mute_spin/
 !logs/reference/
+!logs/reference/**
 !logs/run_tensorboard_in_model_folder.bat
 !rvc/models/pretraineds/.gitkeep
 !rvc/models/pretraineds/hifi-gan/.gitkeep
