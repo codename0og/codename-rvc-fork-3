@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import signal
 
 os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
 
@@ -175,6 +176,7 @@ def flush_writer(writer, rank):
     if rank == 0 and writer is not None:
         writer.flush()
 
+# Tensorboard flusher for grad monitoring - currently has no use.
 def flush_writer_grad(writer, rank, global_step):
     """
     Flush the TensorBoard writer every 10 steps and if on rank 0.
@@ -186,12 +188,22 @@ def flush_writer_grad(writer, rank, global_step):
     if rank == 0 and writer is not None and global_step % 10 == 0:
         writer.flush()
 
+# To make sure that an interrupt like Ctrl+C doesn’t flush by accident
+def block_tensorboard_flush_on_exit(writer):
+    def handler(signum, frame):
+        print("[Warning] Training interrupted. Skipping flush to avoid partial logs.")
+        try:
+            writer.close()  # Close safely, no flush here.
+        except:
+            pass
+        os._exit(1)
+
+    signal.signal(signal.SIGINT, handler)   # for ' Ctrl+C '
+    signal.signal(signal.SIGTERM, handler)  # for kill / terminate
+
 
 # --------------------------   Custom functions End here   --------------------------
 
-
-
-# --------------------------   Execution   --------------------------
 
 import logging
 logging.getLogger("torch").setLevel(logging.ERROR)
@@ -410,7 +422,12 @@ def run(
 
 
     if rank == 0:
-        writer_eval = SummaryWriter(log_dir=os.path.join(experiment_dir, "eval"))
+        writer_eval = SummaryWriter(
+            log_dir=os.path.join(experiment_dir, "eval"),
+            flush_secs=86400 # Periodic background flush's timer workarouand.
+        )
+        block_tensorboard_flush_on_exit(writer_eval)
+
     else:
         writer_eval = None
 
@@ -455,6 +472,13 @@ def run(
         persistent_workers=True,
         prefetch_factor=8,
     )
+
+    # train_loader safety check
+    if len(train_loader) < 3:
+        print(
+            "Not enough data present in the training set. Perhaps you didn't slice the audio files? ( Preprocessing step )"
+        )
+        os._exit(2333333)
 
     # Initialize models and optimizers
     from rvc.lib.algorithm.discriminators import MultiPeriodDiscriminator
@@ -572,8 +596,6 @@ def run(
             eps = 1e-9,
             weight_decay=0,
         )
-
-
 
 
     if multiscale_mel_loss:
@@ -826,8 +848,19 @@ def train_and_evaluate(
     multi_epoch_loss_tensor = torch.zeros(5, device=device)
     num_batches_in_epoch = 0
 
+    # buffering for logging of grads:
+    grad_log_buffer = {
+    "grad/norm/step/d_raw": [],
+    "grad/norm/step/g_raw": [],
+    "grad/norm/step/d_clipped": [],
+    "grad/norm/step/g_clipped": [],
+    }
+
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
+            global_step += 1
+            num_batches_in_epoch += 1
+
             if device.type == "cuda" and not cache_data_in_gpu:
                 info = [tensor.cuda(device_id, non_blocking=True) for tensor in info]
             elif device.type != "cuda":
@@ -870,17 +903,16 @@ def train_and_evaluate(
            # Discriminator backward and update
             optim_d.zero_grad()
             loss_disc.backward()
-        # 1. Raw grads logging:
+            # 1. Raw grads buffering:
             grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            writer.add_scalar("grad_step/norm_d", grad_norm_d_raw, global_step)
-        # 2. Grad norm clipping: 
+            grad_log_buffer["grad/norm/step/d_raw"].append((global_step, grad_norm_d_raw))
+            # 2. Grad norm clipping: 
             grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) #700   |   #999999
-        # 3. Clipped grads logging:
+            # 3. Clipped grads buffering:
             grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            writer.add_scalar("grad_step/norm_d_clipped", grad_norm_d_clipped, global_step)
-        # 4. flushing every 10 steps
-            flush_writer_grad(writer, rank, global_step)
-        # 5. Optimization step:
+            grad_log_buffer["grad/norm/step/d_clipped"].append((global_step, grad_norm_d_clipped))
+
+            # 4. Optimization step:
             optim_d.step()
 
 
@@ -921,31 +953,27 @@ def train_and_evaluate(
 
             optim_g.zero_grad()
             loss_gen_all.backward()
-        # 1. Raw grads logging:
+            # 1. Raw grads buffering:
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            writer.add_scalar("grad_step/norm_g", grad_norm_g_raw, global_step)
-        # 2. Grad norm clipping: 
+            grad_log_buffer["grad/norm/step/g_raw"].append((global_step, grad_norm_g_raw))
+            # 2. Grad norm clipping: 
             grad_norm_g = torch.nn.utils.clip_grad_norm_(net_g.parameters(), max_norm=999999) #500   |   #999999
-        # 3. Clipped grads logging:
+            # 3. Clipped grads buffering:
             grad_norm_g_clipped = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            writer.add_scalar("grad_step/norm_g_clipped", grad_norm_g_clipped, global_step)
-        # 4. flushing every 10 steps
-            flush_writer_grad(writer, rank, global_step)
-        # 5. Optimization step:
+            grad_log_buffer["grad/norm/step/g_clipped"].append((global_step, grad_norm_g_clipped))
+
+            # 4. Optimization step:
             optim_g.step()
 
-
-            global_step += 1
-            num_batches_in_epoch += 1
-
-            # Accumulation of losses in the epoch_loss_tensor:
+        # Loss accumulation:
+            # In the epoch_loss_tensor:
             epoch_loss_tensor[0].add_(loss_disc.detach())
             epoch_loss_tensor[1].add_(loss_gen_all.detach())
             epoch_loss_tensor[2].add_(loss_fm.detach())
             epoch_loss_tensor[3].add_(loss_mel.detach())
             epoch_loss_tensor[4].add_(loss_kl.detach())
 
-            # Accumulation of losses in the multi_epoch_loss_tensor:
+            # In the multi_epoch_loss_tensor:
             multi_epoch_loss_tensor[0].add_(loss_disc.detach())
             multi_epoch_loss_tensor[1].add_(loss_gen_all.detach())
             multi_epoch_loss_tensor[2].add_(loss_fm.detach())
@@ -998,14 +1026,14 @@ def train_and_evaluate(
         )
 
         # Codename;0's tweak / feature  |  Mel similarity metric
-        mel_spec_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel) # Calculate
-        print(f'Mel Spectrogram Similarity: {mel_spec_similarity:.2f}%') # Print
-        writer.add_scalar('Metric/Mel_Spectrogram_Similarity', mel_spec_similarity, global_step) # Log
+        mel_spec_similarity = mel_spectrogram_similarity(y_hat_mel, y_mel)
+        print(f'Mel Spectrogram Similarity: {mel_spec_similarity:.2f}%')
+        writer.add_scalar('Metric/Mel_Spectrogram_Similarity', mel_spec_similarity, global_step)
 
         # After each epoch, calculate and log the average loss:
         if global_step % len(train_loader) == 0:
             avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
-            #
+
             writer.add_scalar("loss_avg/discriminator_total", avg_epoch_loss[0], global_step)
             writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[1], global_step)
             writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
@@ -1013,28 +1041,34 @@ def train_and_evaluate(
             writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
 
             flush_writer(writer, rank)
-            num_batches_in_epoch = 0 # Reset batches_in_epoch counter
-            epoch_loss_tensor.zero_() # Reset tensor for the next epoch - losses
+            num_batches_in_epoch = 0
+            epoch_loss_tensor.zero_()
+
+        # After an epoch is finished, log the buffered grad norms.
+            for tag, values in grad_log_buffer.items():
+                for step, val in values:
+                    writer.add_scalar(tag, val, step)
+            grad_log_buffer = {k: [] for k in grad_log_buffer}  # Reset buffer
 
         # After every 5th epoch, calculate and log the average loss:
         if epoch % 5 == 0:
             avg_multi_epoch_loss = multi_epoch_loss_tensor / 5
-            #
+
             writer.add_scalar("loss_avg_5/discriminator_total_5", avg_multi_epoch_loss[0], global_step)
             writer.add_scalar("loss_avg_5/generator_total_5", avg_multi_epoch_loss[1], global_step)
             writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
             writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
             writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
 
-            flush_writer(writer, rank)
-            multi_epoch_loss_tensor.zero_() # Reset tensor for the next 5 epochs
+            multi_epoch_loss_tensor.zero_()
 
+        # LR Section
         lr_d = optim_d.param_groups[0]["lr"]
         lr_g = optim_g.param_groups[0]["lr"]
 
         scalar_dict = {
-            "learning_rate/lr_d": lr_d,
-            "learning_rate/lr_g": lr_g,
+        "learning_rate/lr_d": lr_d,
+        "learning_rate/lr_g": lr_g,
         }
 
         image_dict = {
