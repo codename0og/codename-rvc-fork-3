@@ -349,16 +349,13 @@ def train_tab():
                 with gr.Column():
                     cpu_cores = gr.Slider(
                         1,
-                        min(cpu_count(), 32),  # max 32 parallel processes
-                        min(cpu_count(), 32),
+                        min(cpu_count(), 192),  # max 32 parallel processes
+                        min(cpu_count(), 192),
                         step=1,
-                        label=i18n("CPU Cores"),
-                        info=i18n(
-                            "The number of CPU cores to use in the extraction process. The default setting are your cpu cores, which is recommended for most cases."
-                        ),
+                        label="CPU Threads",
+                        info="The number of CPU threads used in the extraction process. By default, it is set to the maximum number of threads available on your CPU, which is recommended in most cases.",
                         interactive=True,
                     )
-
                 with gr.Column():
                     gpu = gr.Textbox(
                         label=i18n("GPU Number"),
