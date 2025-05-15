@@ -87,12 +87,16 @@ cleanup = strtobool(sys.argv[14])
 vocoder = sys.argv[15]
 optimizer_choice = sys.argv[16]
 use_checkpointing = strtobool(sys.argv[17])
-use_multiscale_mel_loss = strtobool(sys.argv[18])
-use_custom_lr = strtobool(sys.argv[19])
+use_tf32 = bool(strtobool(sys.argv[18]))
+use_benchmark = bool(strtobool(sys.argv[19]))
+use_deterministic = bool(strtobool(sys.argv[20]))
+use_multiscale_mel_loss = strtobool(sys.argv[21])
+
+use_custom_lr = strtobool(sys.argv[22])
 if use_custom_lr:
     try:
-        custom_lr_g = float(sys.argv[20])
-        custom_lr_d = float(sys.argv[21])
+        custom_lr_g = float(sys.argv[23])
+        custom_lr_d = float(sys.argv[24])
     except (IndexError, ValueError):
         print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
         sys.exit(1)
@@ -120,19 +124,15 @@ except FileNotFoundError:
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
 
-# Torch backends config
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
-torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.benchmark = True
-
 # Globals
 global_step = 0
-warmup_epochs = warmup_duration
-warmup_enabled = use_warmup
 warmup_completed = False
-custom_lr_enabled = use_custom_lr
-multiscale_mel_loss = use_multiscale_mel_loss #
+
+# Torch backends config
+torch.backends.cuda.matmul.allow_tf32 = use_tf32
+torch.backends.cudnn.allow_tf32 = use_tf32
+torch.backends.cudnn.benchmark = use_benchmark
+torch.backends.cudnn.deterministic = use_deterministic
 
 # Globals ( tweakable )
 randomized = True
@@ -388,8 +388,8 @@ def run(
         warmup_completed = False
 
     # Warmup init msg:
-    if rank == 0 and warmup_enabled:
-        print(f"    ██████  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_epochs} epochs.  ██████")
+    if rank == 0 and use_warmup:
+        print(f"    ██████  WARMUP ENABLED: Training will gradually increase learning rates over: {warmup_duration} epochs.  ██████")
 
     # Precision init msg:
     if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
@@ -511,7 +511,7 @@ def run(
         optim_g = Ranger21(
             net_g.parameters(),
         # Core hparams:
-            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
@@ -538,7 +538,7 @@ def run(
         optim_d = Ranger21(
             net_d.parameters(),
         # Core hparams:
-            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
@@ -566,7 +566,7 @@ def run(
         optim_g = torch_optimizer.RAdam(
             net_g.parameters(),
         # Core hparams:
-            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
@@ -574,7 +574,7 @@ def run(
         optim_d = torch_optimizer.RAdam(
             net_d.parameters(),
         # Core hparams:
-            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
@@ -583,7 +583,7 @@ def run(
         optim_g = torch.optim.AdamW(
             net_g.parameters(),
         # Core hparams:
-            lr = custom_lr_g if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
@@ -591,14 +591,14 @@ def run(
         optim_d = torch.optim.AdamW(
             net_d.parameters(),
         # Core hparams:
-            lr = custom_lr_d if custom_lr_enabled else config.train.learning_rate,
+            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
             eps = 1e-9,
             weight_decay=0,
         )
 
 
-    if multiscale_mel_loss:
+    if use_multiscale_mel_loss:
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
         print('Using Multi-Scale Mel loss function')
     else:
@@ -640,7 +640,6 @@ def run(
                     torch.load(pretrainG, map_location="cpu", weights_only=True)["model"]
                 )
 
-
     # Loading the pretrained Discriminator model
         if pretrainD != "" and pretrainD != "None":
             if rank == 0:
@@ -654,22 +653,21 @@ def run(
                     torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
                 )
 
-
-    # Initialize the warmup scheduler only if `warmup_enabled` is True
-    if warmup_enabled:
+    # Initialize the warmup scheduler only if `use_warmup` is True
+    if use_warmup:
         # Warmup for: Generator
         warmup_scheduler_g = torch.optim.lr_scheduler.LambdaLR(
             optim_g,
-            lr_lambda=lambda epoch: (epoch + 1) / warmup_epochs if epoch < warmup_epochs else 1.0
+            lr_lambda=lambda epoch: (epoch + 1) / warmup_duration if epoch < warmup_duration else 1.0
         )
         # Warmup for: MPD
         warmup_scheduler_d = torch.optim.lr_scheduler.LambdaLR(
             optim_d,
-            lr_lambda=lambda epoch: (epoch + 1) / warmup_epochs if epoch < warmup_epochs else 1.0
+            lr_lambda=lambda epoch: (epoch + 1) / warmup_duration if epoch < warmup_duration else 1.0
         )
 
-    # Ensure initial_lr is set when warmup_enabled is False
-    if not warmup_enabled:
+    # Ensure initial_lr is set when use_warmup is False
+    if not use_warmup:
         # For: Generator
         for param_group in optim_g.param_groups:
             if 'initial_lr' not in param_group:
@@ -705,7 +703,7 @@ def run(
     cache = []
 
     if use_custom_ref:
-        print("Using custom reference input from 'logs\reference\'")
+        print("   Using custom reference input from 'logs\\reference\\'")
 
         # Load and process
         phone = np.load(os.path.join(reference_path, "ref_feats.npy"))
@@ -762,15 +760,15 @@ def run(
             n_gpus,
         )
 
-        if warmup_enabled and epoch <= warmup_epochs:
-            # Starts the warmup phase if warmup_epochs =/= warmup_epochs
+        if use_warmup and epoch <= warmup_duration:
+            # Starts the warmup phase if warmup_duration =/= warmup_duration
             warmup_scheduler_g.step()
             warmup_scheduler_d.step()
 
             # Logging of finished warmup
-            if epoch == warmup_epochs:
+            if epoch == warmup_duration:
                 warmup_completed = True
-                print(f"    ██████  Warmup completed at pochs: {warmup_epochs}  ██████")
+                print(f"    ██████  Warmup completed at pochs: {warmup_duration}  ██████")
                 # Gen:
                 print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}  ██████")
                 # Discs:
@@ -779,7 +777,7 @@ def run(
                 print(f"    ██████  Starting the exponential lr decay with gamma of {config.train.lr_decay}  ██████")
  
         # Once the warmup phase is completed, uses exponential lr decay
-        if not warmup_enabled or warmup_completed:
+        if not use_warmup or warmup_completed:
             decay_scheduler_g.step()
             decay_scheduler_d.step()
 
@@ -919,7 +917,7 @@ def train_and_evaluate(
             # Generator backward and update
             _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
 
-            if multiscale_mel_loss:
+            if use_multiscale_mel_loss:
                 loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
             else:
                 wave_mel = mel_spectrogram_torch(

@@ -513,6 +513,9 @@ def run_train_script(
     vocoder: str = "HiFi-GAN",
     optimizer: str = "AdamW",
     use_checkpointing: bool = False,
+    use_tf32: bool = False,
+    use_benchmark: bool = True,
+    use_deterministic: bool = False,
     use_multiscale_mel_loss: bool = True,
     use_custom_lr: bool = False,
     custom_lr_g: float = 1e-4,
@@ -560,6 +563,9 @@ def run_train_script(
                 vocoder,
                 optimizer,
                 use_checkpointing,
+                use_tf32,
+                use_benchmark,
+                use_deterministic,
                 use_multiscale_mel_loss,
                 use_custom_lr,
                 custom_lr_g,
@@ -2092,8 +2098,29 @@ def parse_arguments():
         "--warmup_duration",
         type=int,
         help="Duration of warmup phase (Measured in epochs).",
-        choices=range(1, 100),
+        choices=range(1, 1000),
         default=10,
+    )
+    train_parser.add_argument(
+        "--use_tf32",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Lets you choose between FP32 and TF32 precision used in training.",
+        default=False,
+    )
+    train_parser.add_argument(
+        "--use_benchmark",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Enable cuDNN benchmark mode for potential speedup.",
+        default=True,
+    )
+    train_parser.add_argument(
+        "--use_deterministic",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Toggle deterministic mode for reproducibility at possible performance cost.",
+        default=False,
     )
     train_parser.add_argument(
         "--use_multiscale_mel_loss",
@@ -2441,6 +2468,9 @@ def main():
                 vocoder=args.vocoder,
                 optimizer=args.optimizer,
                 use_checkpointing=args.use_checkpointing,
+                use_tf32=args.use_tf32,
+                use_benchmark=args.use_benchmark,
+                use_deterministic=args.use_deterministic,
                 use_multiscale_mel_loss=args.use_multiscale_mel_loss,
                 use_custom_lr=args.use_custom_lr,
                 custom_lr_g=args.custom_lr_g,

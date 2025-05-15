@@ -349,7 +349,7 @@ def train_tab():
                 with gr.Column():
                     cpu_cores = gr.Slider(
                         1,
-                        min(cpu_count(), 192),  # max 32 parallel processes
+                        min(cpu_count(), 192),  # max 192 parallel processes
                         min(cpu_count(), 192),
                         step=1,
                         label="CPU Threads",
@@ -643,16 +643,34 @@ def train_tab():
                         value=False,
                         interactive=True,
                     )
-                    use_multiscale_mel_loss = gr.Checkbox(
-                        label="Use Multi-scale Mel loss function",
-                        info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale. ). \n Extra on L1: The results might be less detailed but this might as well, potentially, mitigate 'metalic voice' effect. \n Tries to mirror mainline rvc results.",
-                        value=True,
-                        interactive=True,
-                    )
                     use_checkpointing = gr.Checkbox(
                         label="Checkpointing",
                         info="Enables memory-efficient training. \n This reduces the vram usage / requirement on cost of the computation / training speed. \n Enable it If you're an user of a GPU with limited memory ( e.g.: <6GB VRAM ) \n ( Or if you intend to use a bigger batch size than your gpu can handle. )",
                         value=False,
+                        interactive=True,
+                    )
+                    use_tf32 = gr.Checkbox(
+                        label="use 'TF32' precision",
+                        info="Uses TF32 precision instead of FP32, typically resulting in 30% to 100% faster training. \n**Supported only on Ampere GPUs and newer!**",
+                        value=False,
+                        interactive=True,
+                    )
+                    use_benchmark = gr.Checkbox(
+                        label="Use 'cuDNN benchmark' mode",
+                        info="Enable cuDNN benchmark mode **for potential speedup.**",
+                        value=True,
+                        interactive=True,
+                    )
+                    use_deterministic = gr.Checkbox(
+                        label="Use 'cuDNN deterministic' mode",
+                        info="Toggle deterministic mode for reproducibility **at possible performance cost.**",
+                        value=False,
+                        interactive=True,
+                    )
+                    use_multiscale_mel_loss = gr.Checkbox(
+                        label="Use Multi-scale Mel loss function",
+                        info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale. ). \n Extra on L1: The results might be less detailed but this might as well, potentially, mitigate 'metalic voice' effect. \n Tries to mirror mainline rvc results.",
+                        value=True,
                         interactive=True,
                     )
             with gr.Column():
@@ -812,6 +830,9 @@ def train_tab():
                     vocoder,
                     optimizer,
                     use_checkpointing,
+                    use_tf32,
+                    use_benchmark,
+                    use_deterministic,
                     use_multiscale_mel_loss,
                     use_custom_lr,
                     custom_lr_g,
