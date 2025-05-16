@@ -638,8 +638,7 @@ def train_tab():
                     cache_dataset_in_gpu = gr.Checkbox(
                         label=i18n("Cache Dataset in GPU"),
                         info=i18n(
-                            "Cache the dataset in GPU memory to speed up the training process. \n NOTE: It is advised to have it turned off \n( Especially if the dataset is large / If you're low on VRAM. ) "
-                        ),
+                            "Cache the dataset in GPU memory to speed up the training process. \n NOTE: It is advised to have it turned off! "),
                         value=False,
                         interactive=True,
                     )
@@ -669,7 +668,13 @@ def train_tab():
                     )
                     use_multiscale_mel_loss = gr.Checkbox(
                         label="Use Multi-scale Mel loss function",
-                        info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale. ). \n Extra on L1: The results might be less detailed but this might as well, potentially, mitigate 'metalic voice' effect. \n Tries to mirror mainline rvc results.",
+                        info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale ). \nTries to mirror mainline rvc results.",
+                        value=True,
+                        interactive=True,
+                    )
+                    double_d_update = gr.Checkbox(
+                        label="Double-update strategy for Discriminator",
+                        info="Makes it so the Discriminator is being updated twice per step. \n Enabled by default.",
                         value=True,
                         interactive=True,
                     )
@@ -834,6 +839,7 @@ def train_tab():
                     use_benchmark,
                     use_deterministic,
                     use_multiscale_mel_loss,
+                    double_d_update,
                     use_custom_lr,
                     custom_lr_g,
                     custom_lr_d,

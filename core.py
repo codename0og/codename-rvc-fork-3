@@ -517,6 +517,7 @@ def run_train_script(
     use_benchmark: bool = True,
     use_deterministic: bool = False,
     use_multiscale_mel_loss: bool = True,
+    double_d_update: bool = True,
     use_custom_lr: bool = False,
     custom_lr_g: float = 1e-4,
     custom_lr_d: float = 1e-4,
@@ -567,6 +568,7 @@ def run_train_script(
                 use_benchmark,
                 use_deterministic,
                 use_multiscale_mel_loss,
+                double_d_update,
                 use_custom_lr,
                 custom_lr_g,
                 custom_lr_d
@@ -2130,6 +2132,13 @@ def parse_arguments():
         default=True,
     )
     train_parser.add_argument(
+        "--double_d_update",
+        type=lambda x: bool(strtobool(x)),
+        choices=[True, False],
+        help="Whether you wanna use double-update strategy for Discriminator.",
+        default=True,
+    )
+    train_parser.add_argument(
         "--use_custom_lr",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
@@ -2472,6 +2481,7 @@ def main():
                 use_benchmark=args.use_benchmark,
                 use_deterministic=args.use_deterministic,
                 use_multiscale_mel_loss=args.use_multiscale_mel_loss,
+                double_d_update=args.double_d_update,
                 use_custom_lr=args.use_custom_lr,
                 custom_lr_g=args.custom_lr_g,
                 custom_lr_d=args.custom_lr_d,

@@ -66,7 +66,7 @@ from rvc.lib.algorithm import commons
 
 from rvc.train.custom_optimizers.ranger21 import Ranger21
 
-import torch_optimizer # TEST
+import torch_optimizer
 
 # Parse command line arguments start region ===========================
 
@@ -92,11 +92,19 @@ use_benchmark = bool(strtobool(sys.argv[19]))
 use_deterministic = bool(strtobool(sys.argv[20]))
 use_multiscale_mel_loss = strtobool(sys.argv[21])
 
-use_custom_lr = strtobool(sys.argv[22])
+double_d_update = strtobool(sys.argv[22])
+
+if double_d_update:
+    d_updates_per_step = 2
+else:
+    d_updates_per_step = 1
+
+# Custom lr safety
+use_custom_lr = strtobool(sys.argv[23])
 if use_custom_lr:
     try:
-        custom_lr_g = float(sys.argv[23])
-        custom_lr_d = float(sys.argv[24])
+        custom_lr_g = float(sys.argv[24])
+        custom_lr_d = float(sys.argv[25])
     except (IndexError, ValueError):
         print("Custom LR for Generator and Discriminator is enabled, but the values aren't set properly / are invalid.")
         sys.exit(1)
@@ -105,6 +113,7 @@ else:
     custom_lr_d = None
 
 # Parse command line arguments end region ===========================
+
 
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
@@ -124,6 +133,7 @@ except FileNotFoundError:
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
 
+
 # Globals
 global_step = 0
 warmup_completed = False
@@ -136,7 +146,6 @@ torch.backends.cudnn.deterministic = use_deterministic
 
 # Globals ( tweakable )
 randomized = True
-
 
 # --------------------------   Custom functions land in here   --------------------------
 
@@ -393,32 +402,38 @@ def run(
 
     # Precision init msg:
     if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
-        print("    ██████  PRECISION: TF32             ██████")
+        print("    ██████  PRECISION: TF32                        ██████")
     else:
-        print("    ██████  PRECISION: FP32             ██████")
+        print("    ██████  PRECISION: FP32                        ██████")
 
     # backends.cudnn checks:
         # For benchmark:
     if torch.backends.cudnn.benchmark:
-        print("    ██████  cudnn.benchmark: True       ██████")
+        print("    ██████  cudnn.benchmark: True                  ██████")
     else:
-        print("    ██████  cudnn.benchmark: False      ██████")
+        print("    ██████  cudnn.benchmark: False                 ██████")
         # For deterministic:
     if torch.backends.cudnn.deterministic:
-        print("    ██████  cudnn.deterministic: True   ██████")
+        print("    ██████  cudnn.deterministic: True              ██████")
     else:
-        print("    ██████  cudnn.deterministic: False  ██████")
+        print("    ██████  cudnn.deterministic: False             ██████")
 
     # optimizer checks:
         # For Ranger21:
     if optimizer_choice == "Ranger21":
-        print("    ██████  Optimizer used: Ranger21    ██████")
+        print("    ██████  Optimizer used: Ranger21               ██████")
         # For RAdam:
     elif optimizer_choice == "RAdam":
-        print("    ██████  Optimizer used: RAdam       ██████")
+        print("    ██████  Optimizer used: RAdam                  ██████")
         # For AdamW:
     elif optimizer_choice == "AdamW":
-        print("    ██████  Optimizer used: AdamW       ██████")
+        print("    ██████  Optimizer used: AdamW                  ██████")
+
+    # Training strategy check:
+    if double_d_update:
+        print("    ██████  Using double-update strategy           ██████")
+    else:
+        print("    ██████  Not using double-update strategy       ██████")
 
 
     if rank == 0:
@@ -842,8 +857,8 @@ def train_and_evaluate(
     epoch_recorder = EpochRecorder()
 
     # Tensors init for averaged losses:
-    epoch_loss_tensor = torch.zeros(5, device=device)
-    multi_epoch_loss_tensor = torch.zeros(5, device=device)
+    epoch_loss_tensor = torch.zeros(6, device=device)
+    multi_epoch_loss_tensor = torch.zeros(6, device=device)
     num_batches_in_epoch = 0
 
     # buffering for logging of grads:
@@ -893,25 +908,26 @@ def train_and_evaluate(
                     dim=3,
                 )
 
-            # MultiPeriodDiscriminator:
-            y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
-            loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
+            for _ in range(d_updates_per_step): # default is 1 update per step ( simply 1 ) 
+                # MultiPeriodDiscriminator:
+                y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-           # Discriminator backward and update
-            optim_d.zero_grad()
-            loss_disc.backward()
-            # 1. Raw grads buffering:
-            grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            grad_log_buffer["grad/norm/step/d_raw"].append((global_step, grad_norm_d_raw))
-            # 2. Grad norm clipping: 
-            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) #700   |   #999999
-            # 3. Clipped grads buffering:
-            grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-            grad_log_buffer["grad/norm/step/d_clipped"].append((global_step, grad_norm_d_clipped))
+               # Discriminator backward and update
+                optim_d.zero_grad()
+                loss_disc.backward()
+                # 1. Raw grads buffering:
+                grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                grad_log_buffer["grad/norm/step/d_raw"].append((global_step, grad_norm_d_raw))
+                # 2. Grad norm clipping: 
+                grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) #700   |   #999999
+                # 3. Clipped grads buffering:
+                grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                grad_log_buffer["grad/norm/step/d_clipped"].append((global_step, grad_norm_d_clipped))
 
-            # 4. Optimization step:
-            optim_d.step()
+                # 4. Optimization step:
+                optim_d.step()
 
 
             # Generator backward and update
@@ -966,17 +982,19 @@ def train_and_evaluate(
         # Loss accumulation:
             # In the epoch_loss_tensor:
             epoch_loss_tensor[0].add_(loss_disc.detach())
-            epoch_loss_tensor[1].add_(loss_gen_all.detach())
-            epoch_loss_tensor[2].add_(loss_fm.detach())
-            epoch_loss_tensor[3].add_(loss_mel.detach())
-            epoch_loss_tensor[4].add_(loss_kl.detach())
+            epoch_loss_tensor[1].add_(loss_gen.detach())
+            epoch_loss_tensor[2].add_(loss_gen_all.detach())
+            epoch_loss_tensor[3].add_(loss_fm.detach())
+            epoch_loss_tensor[4].add_(loss_mel.detach())
+            epoch_loss_tensor[5].add_(loss_kl.detach())
 
             # In the multi_epoch_loss_tensor:
             multi_epoch_loss_tensor[0].add_(loss_disc.detach())
-            multi_epoch_loss_tensor[1].add_(loss_gen_all.detach())
-            multi_epoch_loss_tensor[2].add_(loss_fm.detach())
-            multi_epoch_loss_tensor[3].add_(loss_mel.detach())
-            multi_epoch_loss_tensor[4].add_(loss_kl.detach())
+            multi_epoch_loss_tensor[1].add_(loss_gen.detach())
+            multi_epoch_loss_tensor[2].add_(loss_gen_all.detach())
+            multi_epoch_loss_tensor[3].add_(loss_fm.detach())
+            multi_epoch_loss_tensor[4].add_(loss_mel.detach())
+            multi_epoch_loss_tensor[5].add_(loss_kl.detach())
 
             pbar.update(1)
         # end of batch train
@@ -1032,11 +1050,12 @@ def train_and_evaluate(
         if global_step % len(train_loader) == 0:
             avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
 
-            writer.add_scalar("loss_avg/discriminator_total", avg_epoch_loss[0], global_step)
-            writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[1], global_step)
-            writer.add_scalar("loss_avg/fm", avg_epoch_loss[2], global_step)
-            writer.add_scalar("loss_avg/mel", avg_epoch_loss[3], global_step)
-            writer.add_scalar("loss_avg/kl", avg_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg/discriminator_adv", avg_epoch_loss[0], global_step)
+            writer.add_scalar("loss_avg/generator_adv", avg_epoch_loss[1], global_step) # new to verify
+            writer.add_scalar("loss_avg/generator_total", avg_epoch_loss[2], global_step)
+            writer.add_scalar("loss_avg/fm", avg_epoch_loss[3], global_step)
+            writer.add_scalar("loss_avg/mel", avg_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg/kl", avg_epoch_loss[5], global_step)
 
             flush_writer(writer, rank)
             num_batches_in_epoch = 0
@@ -1052,11 +1071,12 @@ def train_and_evaluate(
         if epoch % 5 == 0:
             avg_multi_epoch_loss = multi_epoch_loss_tensor / 5
 
-            writer.add_scalar("loss_avg_5/discriminator_total_5", avg_multi_epoch_loss[0], global_step)
-            writer.add_scalar("loss_avg_5/generator_total_5", avg_multi_epoch_loss[1], global_step)
-            writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[2], global_step)
-            writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[3], global_step)
-            writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg_5/discriminator_adv_5", avg_multi_epoch_loss[0], global_step)
+            writer.add_scalar("loss_avg_5/generator_adv_5", avg_multi_epoch_loss[1], global_step)
+            writer.add_scalar("loss_avg_5/generator_total_5", avg_multi_epoch_loss[2], global_step)
+            writer.add_scalar("loss_avg_5/fm_5", avg_multi_epoch_loss[3], global_step)
+            writer.add_scalar("loss_avg_5/mel_5", avg_multi_epoch_loss[4], global_step)
+            writer.add_scalar("loss_avg_5/kl_5", avg_multi_epoch_loss[5], global_step)
 
             multi_epoch_loss_tensor.zero_()
 
