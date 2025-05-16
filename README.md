@@ -26,6 +26,8 @@
  
 - Ability to choose an optimizer.  ` ( Currently supporting: AdamW, RAdam, Ranger21 ) `
  
+- Double-update strategy for Discriminator.
+ 
 - Support for custom input-samples used during training for live-preview / live evaulation of model's performance.
  
 - Mel spectrogram %-based similarity metric.
@@ -74,7 +76,8 @@ Start Applio using:
 
 - **Windows:** Double-click `run-fork.bat`.
 - **Linux/macOS:** Run `run-fork.sh`.
-
+> In cases of having inference errors / issues on MacBooks or other M1, M2 and M3 devices: <br/>Uncomment the " export OMP_NUM_THREADS=1 " line in in the " run-fork.sh " file.
+ 
 This launches the Gradio interface in your default browser.
 
 ### 3. Optional: TensorBoard Monitoring
