@@ -283,18 +283,18 @@ class HiFiGANMRFGenerator(torch.nn.Module):
             else:
                 padding = u // 2 + u % 2
 
-                self.upsamples.append(
-                    weight_norm(
-                        torch.nn.ConvTranspose1d(
+            self.upsamples.append(
+                weight_norm(
+                    torch.nn.ConvTranspose1d(
                         upsample_initial_channel // (2**i),
                         upsample_initial_channel // (2 ** (i + 1)),
                         kernel_size=k,
                         stride=u,
                         padding=padding,
                         output_padding=u % 2,
-                        )
                     )
                 )
+            )
             """ handling odd upsampling rates
             #  s   k   p
             # 40  80  20
