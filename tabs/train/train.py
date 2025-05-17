@@ -589,8 +589,8 @@ def train_tab():
             )
             save_every_epoch = gr.Slider(
                 1,
-                100,
-                10,
+                5000,
+                1,
                 step=1,
                 label="Saving frequency",
                 info="Determines the saving frequency of epochs. \n For example: Saving every 5th epoch.",
