@@ -38,7 +38,7 @@
  
 - Checkpointing and various speed / memory optimizations compared to RVC.
  
-- New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 5 epochs to evaluate general trends and the model's performance over time.
+- New logging mechanism for losses: Average loss per epoch logged as the standard loss, <br/>and rolling average loss over 50 steps to evaluate general trends and the model's performance over time.
  
 - Ability to quickly change the learning rate of Generator And Discriminator.
  
