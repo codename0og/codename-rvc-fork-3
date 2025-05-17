@@ -682,7 +682,7 @@ def run(
                     torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
                 )
 
-    # Check if the training is done from scratch.
+    # Check if the training is ' from scratch '
     if (pretrainG in ["", "None"]) and (pretrainD in ["", "None"]):
         from_scratch = True
         if rank == 0:
@@ -1116,7 +1116,6 @@ def train_and_evaluate(
             if not from_scratch:
                 avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
                 # Dictionary for epoch-avg losses:
-                print(" not from_scratch VVVVVVVVVVVV ")
                 scalar_dict = {
                 "loss_avg/discriminator_adv": avg_epoch_loss[0],
                 "loss_avg/generator_adv": avg_epoch_loss[1],
