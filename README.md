@@ -22,7 +22,7 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Support for 'Spin' feature extraction.  ` Needs proper pretrains. They are in work. `
+- Support for 'Spin' and perhaps soon.. wavlm feature extraction.  ` Needs proper pretrains. They are in work. `
  
 - Ability to choose an optimizer.  ` ( Currently supporting: AdamW, RAdam, Ranger21 ) `
  
