@@ -98,7 +98,7 @@ if double_d_update:
     d_updates_per_step = 2
 else:
     d_updates_per_step = 1
-
+    
 # Custom lr safety
 use_custom_lr = strtobool(sys.argv[23])
 if use_custom_lr:
@@ -147,7 +147,9 @@ torch.backends.cudnn.deterministic = use_deterministic
 
 # Globals ( tweakable )
 randomized = True
-log_grads_every_step = False # Do not enable this unless you know what you're doing and why!
+log_grads_every_step = False # EXPERIMENTAL
+use_another_batch = False # EXPERIMENTAL
+adv_weight = 0.5
 
 
 avg_50_cache = {
@@ -449,8 +451,13 @@ def run(
     # Training strategy checks:
     if d_updates_per_step == 2:
         print("    ██████  Using double-update for D strategy            ██████")
+        if use_another_batch:
+            print("    ██████  Fetching of new batch for 2nd update: ON      ██████")
+        else:
+            print("    ██████  Fetching of new batch for 2nd update: OFF     ██████")
     else:
         print("    ██████  Not using double-update for D strategy        ██████")
+
     if rank == 0:
         writer_eval = SummaryWriter(
             log_dir=os.path.join(experiment_dir, "eval"),
@@ -681,11 +688,11 @@ def run(
                     torch.load(pretrainD, map_location="cpu", weights_only=True)["model"]
                 )
 
-    # Check if the training is ' from scratch '
+    # Check if the training is ' from scratch ' and set appropriate flag
     if (pretrainG in ["", "None"]) and (pretrainD in ["", "None"]):
         from_scratch = True
         if rank == 0:
-            print("    ██████  No pretrained loaded. Training from scratch.  ██████")
+            print("    ██████  No pretrained loaded: TRAINING FROM SCRATCH.  ██████")
 
     # Initialize the warmup scheduler only if `use_warmup` is True
     if use_warmup:
@@ -804,9 +811,9 @@ def run(
                 warmup_completed = True
                 print(f"    ██████  Warmup completed at pochs: {warmup_duration}  ██████")
                 # Gen:
-                print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}  ██████")
+                print(f"    ██████  LR G: {optim_g.param_groups[0]['lr']}         ██████")
                 # Discs:
-                print(f"    ██████  LR D: {optim_d.param_groups[0]['lr']}  ██████")
+                print(f"    ██████  LR D: {optim_d.param_groups[0]['lr']}         ██████")
                 # Decay gamma:
                 print(f"    ██████  Starting the exponential lr decay with gamma of {config.train.lr_decay}  ██████")
  
@@ -856,6 +863,17 @@ def train_and_evaluate(
         writer = writers[0]
 
     train_loader.batch_sampler.set_epoch(epoch)
+
+    if use_another_batch and d_updates_per_step == 2:
+        fresh_data_loader = torch.utils.data.DataLoader(
+            dataset=train_loader.dataset,
+            batch_sampler=train_loader.batch_sampler,
+            num_workers=train_loader.num_workers,
+            pin_memory=train_loader.pin_memory,
+            persistent_workers=getattr(train_loader, 'persistent_workers', False),
+            collate_fn=train_loader.collate_fn,
+        )
+        fresh_data_iterator = iter(fresh_data_loader)
 
     net_g.train()
     net_d.train()
@@ -932,9 +950,45 @@ def train_and_evaluate(
                     dim=3,
                 )
 
-            for _ in range(d_updates_per_step): # default is 1 update per step ( simply 1 ) 
-                # MultiPeriodDiscriminator:
-                y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+            # MultiPeriodDiscriminator:
+            for d_step in range(d_updates_per_step):  # default is 1 update per step
+                if d_step == 0:
+                    # First step always uses current batch
+                    d_wave = wave
+                    d_y_hat = y_hat.detach()
+                elif use_another_batch:
+                    # Get a new batch for each ' 2nd update '
+                    try:
+                        new_info = next(fresh_data_iterator)
+                    except StopIteration:
+                        fresh_data_iterator = iter(fresh_data_loader)
+                        new_info = next(fresh_data_iterator)
+
+                    if device.type == "cuda" and not cache_data_in_gpu:
+                        new_info = [tensor.cuda(device_id, non_blocking=True) for tensor in new_info]
+                    elif device.type != "cuda":
+                        new_info = [tensor.to(device) for tensor in new_info]
+
+                    new_phone = new_info[0]
+                    new_phone_lengths = new_info[1]
+                    new_pitch = new_info[2]
+                    new_pitchf = new_info[3]
+                    new_spec = new_info[4]
+                    new_spec_lengths = new_info[5]
+                    new_wave = new_info[6]
+                    new_sid = new_info[8]
+
+                    with torch.no_grad():
+                        new_y_hat, *_ = net_g(new_phone, new_phone_lengths, new_pitch, new_pitchf, new_spec, new_spec_lengths, new_sid)
+
+                    d_wave = new_wave
+                    d_y_hat = new_y_hat.detach()
+                else:
+                    d_wave = wave
+                    d_y_hat = y_hat.detach()
+
+                # Discriminator forward
+                y_d_hat_r, y_d_hat_g, _, _ = net_d(d_wave, d_y_hat)
                 loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
                # Discriminator backward and update
@@ -985,9 +1039,10 @@ def train_and_evaluate(
 
             loss_fm = feature_loss(fmap_r, fmap_g)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-            loss_gen, _ = generator_loss(y_d_hat_g)
+            loss_gen = generator_loss(y_d_hat_g)
+            #loss_gen, _ = generator_loss(y_d_hat_g)
 
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
+            loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
 
 
             optim_g.zero_grad()

@@ -45,13 +45,13 @@ def generator_loss(disc_outputs):
         disc_outputs (list of torch.Tensor): List of discriminator outputs for generated samples.
     """
     loss = 0
-    gen_losses = []
+    #gen_losses = []
     for dg in disc_outputs:
         l = torch.mean((1 - dg.float()) ** 2)
         # gen_losses.append(l.item())
         loss += l
 
-    return loss, gen_losses
+    return loss #, gen_losses
 
 
 def discriminator_loss_scaled(disc_real, disc_fake, scale=1.0):

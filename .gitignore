@@ -35,3 +35,5 @@ EXTRAS/slice_old_excluded_from_repo.py
 rvc/train/train — newest but just harm residue loss enabled.py
 rvc/train/losses — kopia extra losses, temp.py
 rvc/train/train- backup_with_old_logging.py
+rvc/train/train - fresh batch attempt 2.py
+rvc/train/train- backup_same_update.py
