@@ -446,18 +446,17 @@ def run(
     elif optimizer_choice == "AdamW":
         print("    ██████  Optimizer used: AdamW                         ██████")
 
-    # Training strategy check:
+    # Training strategy checks:
     if d_updates_per_step == 2:
-        print("    ██████  Using double-update strategy                  ██████")
+        print("    ██████  Using double-update for D strategy            ██████")
     else:
-        print("    ██████  Not using double-update strategy              ██████")
+        print("    ██████  Not using double-update for D strategy        ██████")
     if rank == 0:
         writer_eval = SummaryWriter(
             log_dir=os.path.join(experiment_dir, "eval"),
             flush_secs=86400 # Periodic background flush's timer workarouand.
         )
         block_tensorboard_flush_on_exit(writer_eval)
-
     else:
         writer_eval = None
 
@@ -893,6 +892,7 @@ def train_and_evaluate(
 
     with tqdm(total=len(train_loader), leave=False) as pbar:
         for batch_idx, info in data_iterator:
+
             global_step += 1
 
             if not from_scratch:
@@ -1029,8 +1029,17 @@ def train_and_evaluate(
             avg_50_cache["kl_50"].append(loss_kl.detach())
 
             if rank == 0 and global_step % 50 == 0:
+                scalar_dict_50 = {}
+                # Learning rate retrieval for avg-50 variation:
+                if from_scratch:
+                    lr_d = optim_d.param_groups[0]["lr"]
+                    lr_g = optim_g.param_groups[0]["lr"]
+                    scalar_dict_50.update({
+                    "learning_rate/lr_d": lr_d,
+                    "learning_rate/lr_g": lr_g,
+                    })
                 # logging rolling averages
-                scalar_dict = {
+                scalar_dict_50.update({
                     # Grads:
                     "grad_avg_50/norm_d_raw_50": sum(avg_50_cache["grad_norm_d_raw_50"])
                     / len(avg_50_cache["grad_norm_d_raw_50"]),
@@ -1053,8 +1062,8 @@ def train_and_evaluate(
                         torch.stack(list(avg_50_cache["mel_50"]))),
                     "loss_avg_50/kl_50": torch.mean(
                         torch.stack(list(avg_50_cache["kl_50"]))),
-                }
-                summarize(writer=writer, global_step=global_step, scalars=scalar_dict)
+                })
+                summarize(writer=writer, global_step=global_step, scalars=scalar_dict_50)
                 flush_writer(writer, rank)
 
             pbar.update(1)
@@ -1106,39 +1115,36 @@ def train_and_evaluate(
         print(f'Mel Spectrogram Similarity: {mel_similarity:.2f}%')
         writer.add_scalar('Metric/Mel_Spectrogram_Similarity', mel_similarity, global_step)
 
-        # Learning rate retrieval:
+        # Learning rate retrieval for avg-epoch variation:
         lr_d = optim_d.param_groups[0]["lr"]
         lr_g = optim_g.param_groups[0]["lr"]
 
         # Calculate the avg epoch loss:
-        if global_step % len(train_loader) == 0: # At each epoch completion:
+        if global_step % len(train_loader) == 0 and not from_scratch: # At each epoch completion
+            avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
 
-            if not from_scratch:
-                avg_epoch_loss = epoch_loss_tensor / num_batches_in_epoch
-                # Dictionary for epoch-avg losses:
-                scalar_dict = {
-                "loss_avg/discriminator_adv": avg_epoch_loss[0],
-                "loss_avg/generator_adv": avg_epoch_loss[1],
-                "loss_avg/generator_total": avg_epoch_loss[2],
-                "loss_avg/fm": avg_epoch_loss[3],
-                "loss_avg/mel": avg_epoch_loss[4],
-                "loss_avg/kl": avg_epoch_loss[5],
-                }
-                summarize(writer=writer, global_step=global_step, scalars=scalar_dict)
-                flush_writer(writer, rank)
-
-            scalar_dict = {
+            scalar_dict_avg = {
+            "loss_avg/discriminator_adv": avg_epoch_loss[0],
+            "loss_avg/generator_adv": avg_epoch_loss[1],
+            "loss_avg/generator_total": avg_epoch_loss[2],
+            "loss_avg/fm": avg_epoch_loss[3],
+            "loss_avg/mel": avg_epoch_loss[4],
+            "loss_avg/kl": avg_epoch_loss[5],
             "learning_rate/lr_d": lr_d,
             "learning_rate/lr_g": lr_g,
             }
+            summarize(writer=writer, global_step=global_step, scalars=scalar_dict_avg)
+            flush_writer(writer, rank)
+            num_batches_in_epoch = 0
+            epoch_loss_tensor.zero_()
 
+        # Logging of gradients using " log by step " approach:
         if log_grads_every_step:
             if global_step % len(train_loader) == 0:
-                # After an epoch is finished, log the buffered grad norms.
                 for tag, values in grad_step_log_buffer.items():
                     for step, val in values:
                         writer.add_scalar(tag, val, step)
-                grad_step_log_buffer = {k: [] for k in grad_step_log_buffer}  # Reset buffer
+                grad_step_log_buffer = {k: [] for k in grad_step_log_buffer}
 
         image_dict = {
             "slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().numpy()),
@@ -1146,6 +1152,7 @@ def train_and_evaluate(
             "all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().numpy()),
         }
 
+        # Logging + sample-infer at " save every N epoch " spot:
         if epoch % save_every_epoch == 0:
             net_g.eval()
             with torch.no_grad():
@@ -1154,31 +1161,22 @@ def train_and_evaluate(
                 else:
                     o, *_ = net_g.infer(*reference)
             net_g.train()
-
-            audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # # Eval-infer samples
+            audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # Eval-infer samples
             summarize(
                 writer=writer,
                 global_step=global_step,
                 images=image_dict,
-                scalars=scalar_dict,
                 audios=audio_dict,
                 audio_sample_rate=config.data.sample_rate,
             )
             flush_writer(writer, rank)
-            if not from_scratch:
-                num_batches_in_epoch = 0
-                epoch_loss_tensor.zero_()
         else:
             summarize(
                 writer=writer,
                 global_step=global_step,
                 images=image_dict,
-                scalars=scalar_dict,
             )
             flush_writer(writer, rank)
-            if not from_scratch:
-                num_batches_in_epoch = 0
-                epoch_loss_tensor.zero_()
 
     # Save checkpoint
     model_add = []
