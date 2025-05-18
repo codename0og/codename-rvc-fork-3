@@ -149,7 +149,7 @@ torch.backends.cudnn.deterministic = use_deterministic
 randomized = True
 log_grads_every_step = False # EXPERIMENTAL
 use_another_batch = False # EXPERIMENTAL
-adv_weight = 0.5
+adv_weight = 1.0 # Default is 1.0 ~  If you wanna experiment with it, try anything within 0.5 - 2.0 range
 
 
 avg_50_cache = {
