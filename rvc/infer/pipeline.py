@@ -441,10 +441,6 @@ class Pipeline:
             version: Model version (Keep to support old models).
             protect: Protection level for preserving the original pitch.
         """
-
-        precision = "BF16" if self.is_half else "FP32"
-        print(f"Precision PRIOR {precision}")
-
         with torch.no_grad():
             pitch_guidance = pitch != None and pitchf != None
             # prepare source audio
@@ -499,7 +495,6 @@ class Pipeline:
             del feats, feats0, p_len
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            print(f"Precision used for inference: {precision}")
         return audio1
 
     def _retrieve_speaker_embeddings(self, feats, index, big_npy, index_rate):
