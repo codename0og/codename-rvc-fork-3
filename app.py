@@ -36,11 +36,6 @@ run_prerequisites_script(
     exe=True,
 )
 
-# Initialize i18n
-from assets.i18n.i18n import I18nAuto
-
-i18n = I18nAuto()
-
 # Check installation
 import assets.installation_checker as installation_checker
 
@@ -55,42 +50,32 @@ CodenameViolet = loadThemes.load_theme() or "ParityError/Interstellar"
 with gr.Blocks(
     theme=CodenameViolet, title="Codename-RVC-Fork 🍇", css="footer{display:none !important}"
 ) as Applio:
-    gr.Markdown("# Codename-RVC-Fork 🍇 v3.1.6-rev2")
+    gr.Markdown("# Codename-RVC-Fork 🍇 v3.1.7")
     gr.Markdown(
-        i18n(
-            "ㅤㅤBased on Applioㅤㅤ"
-        )
+        "ㅤㅤBased on Applioㅤㅤ"
     )
     gr.Markdown(
-        i18n(
-            "ㅤㅤㅤ[Support](https://discord.gg/urxFjYmYYh) ㅤ/ ㅤ[GitHub](https://github.com/codename0og/codename-rvc-fork-3) ㅤ/ㅤ [Applio discord bot](https://discord.com/oauth2/authorize?client_id=1144714449563955302&permissions=1376674695271&scope=bot%20applications.commands)​"
-        )
+        "ㅤㅤㅤ[Support](https://discord.gg/urxFjYmYYh) ㅤ/ ㅤ[GitHub](https://github.com/codename0og/codename-rvc-fork-3) ㅤ/ㅤ [Applio discord bot](https://discord.com/oauth2/authorize?client_id=1144714449563955302&permissions=1376674695271&scope=bot%20applications.commands)​"
     )
-    with gr.Tab(i18n("Inference")):
+    with gr.Tab("Inference"):
         inference_tab()
 
-    with gr.Tab(i18n("Training")):
+    with gr.Tab("Training"):
         train_tab()
 
-    with gr.Tab(i18n("TTS")):
+    with gr.Tab("TTS"):
         tts_tab()
 
-    with gr.Tab(i18n("Voice Blender")):
+    with gr.Tab("Voice Blender"):
         voice_blender_tab()
 
-#    with gr.Tab(i18n("Plugins")):
-#        plugins_tab()
-
-    with gr.Tab(i18n("Download")):
+    with gr.Tab("Download"):
         download_tab()
 
-#    with gr.Tab(i18n("Report a Bug")):
-#        report_tab()
-
-    with gr.Tab(i18n("Utilities")):
+    with gr.Tab("Utilities"):
         utilities_tab()
 
-    with gr.Tab(i18n("Settings")):
+    with gr.Tab("Settings"):
         settings_tab()
 
 

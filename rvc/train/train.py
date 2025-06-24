@@ -23,6 +23,9 @@ from tqdm import tqdm
 import numpy as np
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
+
+from torch.amp import GradScaler, autocast
+
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 
@@ -420,10 +423,13 @@ def run(
         print(f"    ██████  Warmup Enabled for {warmup_duration} epochs. ██████")
 
     # Precision init msg:
-    if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
-        print("    ██████  PRECISION: TF32                               ██████")
+    if not config.train.bf16_run:
+        if torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32:
+            print("    ██████  PRECISION: TF32                               ██████")
+        else:
+            print("    ██████  PRECISION: FP32                               ██████")
     else:
-        print("    ██████  PRECISION: FP32                               ██████")
+        print("    ██████  PRECISION: BrainFloat16 AMP                   ██████")
 
     # backends.cudnn checks:
         # For benchmark:
@@ -525,6 +531,7 @@ def run(
         config.train.segment_size // config.data.hop_length,
         **config.model,
         use_f0 = True,
+        is_half=config.train.bf16_run and device.type == "cuda",
         sr = sample_rate,
         vocoder = vocoder,
         checkpointing = use_checkpointing,
@@ -732,6 +739,9 @@ def run(
         optim_d, gamma=0.999875, last_epoch=epoch_str - 1  #  ( stock ) 0.999875       ( finetuning ) 0.995   <=>  ( 50% slower ) 0.9975     ( 30% slower ) 0.9965
     )
 
+    # GradScaler init
+    scaler = GradScaler(enabled=config.train.bf16_run and device.type == "cuda")
+
     # Reference sample fetching mechanism:
         # Feel free to customize the path or namings ( make sure to change em in ' if ' block too. )
     reference_path = os.path.join("logs", "reference")
@@ -789,6 +799,7 @@ def run(
             config,
             [net_g, net_d],
             [optim_g, optim_d],
+            scaler,
             [train_loader, None],
             [writer_eval],
             cache,
@@ -829,6 +840,7 @@ def train_and_evaluate(
     hps,
     nets,
     optims,
+    scaler,
     loaders,
     writers,
     cache,
@@ -935,118 +947,90 @@ def train_and_evaluate(
             ) = info
 
             # Forward pass
-            model_output = net_g(
-                phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
-            )
-            y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
-                model_output
-            )
-            # slice of the original waveform to match a generate slice
-            if randomized:
-                wave = commons.slice_segments(
-                    wave,
-                    ids_slice * config.data.hop_length,
-                    config.train.segment_size,
-                    dim=3,
+            use_amp = config.train.bf16_run and device.type == "cuda"
+            with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
+                model_output = net_g(
+                    phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
                 )
+                y_hat, ids_slice, x_mask, z_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = (
+                    model_output
+                )
+                # slice of the original waveform to match a generate slice
+                if randomized:
+                    wave = commons.slice_segments(
+                        wave,
+                        ids_slice * config.data.hop_length,
+                        config.train.segment_size,
+                        dim=3,
+                    )
 
-            # MultiPeriodDiscriminator:
-            for d_step in range(d_updates_per_step):  # default is 1 update per step
-                if d_step == 0:
-                    # First step always uses current batch
-                    d_wave = wave
-                    d_y_hat = y_hat.detach()
-                elif use_another_batch:
-                    # Get a new batch for each ' 2nd update '
-                    try:
-                        new_info = next(fresh_data_iterator)
-                    except StopIteration:
-                        fresh_data_iterator = iter(fresh_data_loader)
-                        new_info = next(fresh_data_iterator)
+                # MultiPeriodDiscriminator:
+                for _ in range(d_updates_per_step):  # default is 1 update per step
+                    # Discriminator forward
+                    y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                    with autocast(device_type="cuda", enabled=False, dtype=torch.bfloat16):
+                        loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-                    if device.type == "cuda" and not cache_data_in_gpu:
-                        new_info = [tensor.cuda(device_id, non_blocking=True) for tensor in new_info]
-                    elif device.type != "cuda":
-                        new_info = [tensor.to(device) for tensor in new_info]
+            # Discriminator backward and update
+            optim_d.zero_grad()
+            scaler.scale(loss_disc).backward()
+            scaler.unscale_(optim_d)
 
-                    new_phone = new_info[0]
-                    new_phone_lengths = new_info[1]
-                    new_pitch = new_info[2]
-                    new_pitchf = new_info[3]
-                    new_spec = new_info[4]
-                    new_spec_lengths = new_info[5]
-                    new_wave = new_info[6]
-                    new_sid = new_info[8]
-
-                    with torch.no_grad():
-                        new_y_hat, *_ = net_g(new_phone, new_phone_lengths, new_pitch, new_pitchf, new_spec, new_spec_lengths, new_sid)
-
-                    d_wave = new_wave
-                    d_y_hat = new_y_hat.detach()
-                else:
-                    d_wave = wave
-                    d_y_hat = y_hat.detach()
-
-                # Discriminator forward
-                y_d_hat_r, y_d_hat_g, _, _ = net_d(d_wave, d_y_hat)
-                loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
-
-               # Discriminator backward and update
-                optim_d.zero_grad()
-                loss_disc.backward()
-
-
-                # 1. Retrieve raw grads norm
-                grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                if log_grads_every_step:
-                    grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
-                # 2. Grads norm clip
-                grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
-                # 3. Retrieve the clipped grads
-                grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                if log_grads_every_step:
-                    grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
-                # 4. Optimization step
-                optim_d.step()
+            # 1. Retrieve raw grads norm
+            grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+            if log_grads_every_step:
+                grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
+            # 2. Grads norm clip
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
+            # 3. Retrieve the clipped grads
+            grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+            if log_grads_every_step:
+                grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
+            # 4. Optimization step
+            scaler.step(optim_d)
 
             # Generator backward and update
-            _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+            with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
+                _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
 
-            if use_multiscale_mel_loss:
-                loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
-            else:
-                wave_mel = mel_spectrogram_torch(
-                    wave.float().squeeze(1),
-                    config.data.filter_length,
-                    config.data.n_mel_channels,
-                    config.data.sample_rate,
-                    config.data.hop_length,
-                    config.data.win_length,
-                    config.data.mel_fmin,
-                    config.data.mel_fmax,
-                )
-                y_hat_mel = mel_spectrogram_torch(
-                    y_hat.float().squeeze(1),
-                    config.data.filter_length,
-                    config.data.n_mel_channels,
-                    config.data.sample_rate,
-                    config.data.hop_length,
-                    config.data.win_length,
-                    config.data.mel_fmin,
-                    config.data.mel_fmax,
-                )
-                loss_mel = fn_mel_loss(wave_mel, y_hat_mel) * config.train.c_mel
 
-            loss_fm = feature_loss(fmap_r, fmap_g)
-            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-            loss_gen = generator_loss(y_d_hat_g)
-            #loss_gen, _ = generator_loss(y_d_hat_g)
+                with autocast(device_type="cuda", enabled=False, dtype=torch.bfloat16):
+                    if use_multiscale_mel_loss:
+                        loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
+                    else:
+                        wave_mel = mel_spectrogram_torch(
+                            wave.float().squeeze(1),
+                            config.data.filter_length,
+                            config.data.n_mel_channels,
+                            config.data.sample_rate,
+                            config.data.hop_length,
+                            config.data.win_length,
+                            config.data.mel_fmin,
+                            config.data.mel_fmax,
+                        )
+                        y_hat_mel = mel_spectrogram_torch(
+                            y_hat.float().squeeze(1),
+                            config.data.filter_length,
+                            config.data.n_mel_channels,
+                            config.data.sample_rate,
+                            config.data.hop_length,
+                            config.data.win_length,
+                            config.data.mel_fmin,
+                            config.data.mel_fmax,
+                        )
+                        loss_mel = fn_mel_loss(wave_mel, y_hat_mel) * config.train.c_mel
 
-            loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
+                    loss_fm = feature_loss(fmap_r, fmap_g)
+                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+                    loss_gen = generator_loss(y_d_hat_g)
+
+                    loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
 
 
             optim_g.zero_grad()
-            loss_gen_all.backward()
+            scaler.scale(loss_gen_all).backward()
+            scaler.unscale_(optim_g)
+
             # 1. Retrieve raw grads norm
             grad_norm_g_raw = commons.get_total_norm([p.grad for p in net_g.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
             if log_grads_every_step:
@@ -1058,7 +1042,8 @@ def train_and_evaluate(
             if log_grads_every_step:
                 grad_log_buffer["grad/norm_g_raw_step_clipped"].append((global_step, grad_norm_g_clipped))
             # 4. Optimization step
-            optim_g.step()
+            scaler.step(optim_g)
+            scaler.update()
 
             if not from_scratch:
                 # Loss accumulation In the epoch_loss_tensor
@@ -1155,16 +1140,19 @@ def train_and_evaluate(
             y_mel = mel
 
         # used for tensorboard chart - slice/mel_gen
-        y_hat_mel = mel_spectrogram_torch(
-            y_hat.float().squeeze(1),
-            config.data.filter_length,
-            config.data.n_mel_channels,
-            config.data.sample_rate,
-            config.data.hop_length,
-            config.data.win_length,
-            config.data.mel_fmin,
-            config.data.mel_fmax,
-        )
+        with autocast(device_type="cuda", enabled=False, dtype=torch.bfloat16):
+            y_hat_mel = mel_spectrogram_torch(
+                y_hat.float().squeeze(1),
+                config.data.filter_length,
+                config.data.n_mel_channels,
+                config.data.sample_rate,
+                config.data.hop_length,
+                config.data.win_length,
+                config.data.mel_fmin,
+                config.data.mel_fmax,
+            )
+            if use_amp:
+                y_hat_mel =  y_hat_mel.to(torch.bfloat16)
         # Mel similarity metric:
         mel_similarity = mel_spec_similarity(y_hat_mel, y_mel)
         print(f'Mel Spectrogram Similarity: {mel_similarity:.2f}%')
@@ -1202,20 +1190,24 @@ def train_and_evaluate(
                 grad_step_log_buffer = {k: [] for k in grad_step_log_buffer}
 
         image_dict = {
-            "slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().numpy()),
-            "slice/mel_gen": plot_spectrogram_to_numpy(y_hat_mel[0].detach().cpu().numpy()),
-            "all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().numpy()),
+            #"slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().numpy()),
+            #"slice/mel_gen": plot_spectrogram_to_numpy(y_hat_mel[0].detach().cpu().numpy()),
+            #"all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().numpy()),
+            "slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().to(torch.float32).numpy()),
+            "slice/mel_gen": plot_spectrogram_to_numpy(y_hat_mel[0].detach().cpu().to(torch.float32).numpy()),
+            "all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().to(torch.float32).numpy()),
         }
 
         # Logging + sample-infer at " save every N epoch " spot:
         if epoch % save_every_epoch == 0:
-            net_g.eval()
-            with torch.no_grad():
-                if hasattr(net_g, "module"):
-                    o, *_ = net_g.module.infer(*reference)
-                else:
-                    o, *_ = net_g.infer(*reference)
-            net_g.train()
+            with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
+                net_g.eval()
+                with torch.no_grad():
+                    if hasattr(net_g, "module"):
+                        o, *_ = net_g.module.infer(*reference)
+                    else:
+                        o, *_ = net_g.infer(*reference)
+                net_g.train()
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # Eval-infer samples
             summarize(
                 writer=writer,

@@ -132,6 +132,7 @@ class Pipeline:
         self.x_query = config.x_query
         self.x_center = config.x_center
         self.x_max = config.x_max
+        self.is_half = config.is_half
         self.sample_rate = 16000
         self.window = 160
         self.t_pad = self.sample_rate * self.x_pad
@@ -206,6 +207,7 @@ class Pipeline:
         self.note_dict = self.autotune.note_dict
         self.model_rmvpe = RMVPE0Predictor(
             os.path.join("rvc", "models", "predictors", "rmvpe.pt"),
+            is_half=self.is_half,
             device=self.device,
         )
 
@@ -439,10 +441,15 @@ class Pipeline:
             version: Model version (Keep to support old models).
             protect: Protection level for preserving the original pitch.
         """
+
+        precision = "BF16" if self.is_half else "FP32"
+        print(f"Precision PRIOR {precision}")
+
         with torch.no_grad():
             pitch_guidance = pitch != None and pitchf != None
             # prepare source audio
-            feats = torch.from_numpy(audio0).float()
+            feats = torch.from_numpy(audio0)
+            feats = feats.to(torch.bfloat16 if self.is_half else torch.float32)
             feats = feats.mean(-1) if feats.dim() == 2 else feats
             assert feats.dim() == 1, feats.dim()
             feats = feats.view(1, -1).to(self.device)
@@ -483,7 +490,7 @@ class Pipeline:
                 pitch, pitchf = None, None
             p_len = torch.tensor([p_len], device=self.device).long()
             audio1 = (
-                (net_g.infer(feats.float(), p_len, pitch, pitchf.float(), sid)[0][0, 0])
+                (net_g.infer(feats, p_len, pitch, pitchf, sid)[0][0, 0])
                 .data.cpu()
                 .float()
                 .numpy()
@@ -492,18 +499,19 @@ class Pipeline:
             del feats, feats0, p_len
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            print(f"Precision used for inference: {precision}")
         return audio1
 
     def _retrieve_speaker_embeddings(self, feats, index, big_npy, index_rate):
-        npy = feats[0].cpu().numpy()
+        npy = feats[0].to(torch.float32).cpu().numpy()
         score, ix = index.search(npy, k=8)
         weight = np.square(1 / score)
         weight /= weight.sum(axis=1, keepdims=True)
         npy = np.sum(big_npy[ix] * np.expand_dims(weight, axis=2), axis=1)
-        feats = (
-            torch.from_numpy(npy).unsqueeze(0).to(self.device) * index_rate
-            + (1 - index_rate) * feats
-        )
+
+        dtype = torch.bfloat16 if self.is_half else torch.float32
+        feats = torch.from_numpy(npy).unsqueeze(0).to(device=self.device, dtype=dtype)
+        feats = feats * index_rate + (1 - index_rate) * feats
         return feats
 
     def pipeline(
