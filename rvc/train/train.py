@@ -153,6 +153,11 @@ randomized = True
 log_grads_every_step = False # EXPERIMENTAL
 adv_weight = 1.0 # Default is 1.0 ~  If you wanna experiment with it, try anything within 0.5 - 2.0 range
 
+#disable_discriminator = False # EXP to come
+#use_r_generator_loss = False # EXP to come
+
+#disable_fm_loss = False # EXP to come
+#disable_gen_loss = False # EXP to come
 
 avg_50_cache = {
     "grad_norm_d_raw_50": deque(maxlen=50),
@@ -995,11 +1000,11 @@ def train_and_evaluate(
                 y_mel = commons.slice_segments(mel, ids_slice, config.train.segment_size // config.data.hop_length, dim=3)
                 loss_mel = fn_mel_loss(y_mel, y_hat_mel) * config.train.c_mel
 
-                loss_fm = feature_loss(fmap_r, fmap_g)
-                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-                loss_gen = generator_loss(y_d_hat_g)
+            loss_fm = feature_loss(fmap_r, fmap_g)
+            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+            loss_gen = generator_loss(y_d_hat_g)
 
-                loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
+            loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
 
 
             # Generator backward and update:
