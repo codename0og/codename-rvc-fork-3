@@ -27,7 +27,9 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.amp import autocast
 
 from torch.utils.data import DataLoader
+
 from torch.nn import functional as F
+import torch.nn as nn
 
 from torch.nn.utils import clip_grad_norm_
 clip_grad_norm_ = torch.nn.utils.clip_grad_norm_
@@ -55,6 +57,7 @@ from losses import (
     discriminator_loss,
     feature_loss,
     generator_loss,
+    r_generator_loss,
     kl_loss,
 )
 from mel_processing import (
@@ -153,6 +156,11 @@ randomized = True
 log_grads_every_step = False # EXPERIMENTAL
 adv_weight = 1.0 # Default is 1.0 ~  If you wanna experiment with it, try anything within 0.5 - 2.0 range
 
+disable_discriminator = False
+use_r_generator_loss = False
+
+disable_fm_loss = False
+disable_gen_loss = False
 
 avg_50_cache = {
     "grad_norm_d_raw_50": deque(maxlen=50),
@@ -543,6 +551,26 @@ def run(
         net_g = net_g.to(device)
         net_d = net_d.to(device)
 
+
+    class LossBalancer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            # Initialize log_sigma to reflect approximate weights:
+            # mel ~45, fm ~1, adv ~1
+            self.log_sigma_mel = nn.Parameter(torch.tensor(-2.2499))  # roughly corresponds to weight ~45
+            self.log_sigma_fm = nn.Parameter(torch.tensor(0.0))     # no scaling initially
+            self.log_sigma_adv = nn.Parameter(torch.tensor(0.0))    # no scaling initially
+
+        def forward(self, loss_mel, loss_fm, loss_adv):
+            weighted_mel = (1.0 / (2 * torch.exp(self.log_sigma_mel)**2)) * loss_mel + self.log_sigma_mel
+            weighted_fm = (1.0 / (2 * torch.exp(self.log_sigma_fm)**2)) * loss_fm + self.log_sigma_fm
+            weighted_adv = (1.0 / (2 * torch.exp(self.log_sigma_adv)**2)) * loss_adv + self.log_sigma_adv
+
+            return weighted_mel + weighted_fm + weighted_adv
+
+    loss_balancer = LossBalancer().to(device)
+
+
         # OPTIMIZER INIT:
     if optimizer_choice == "Ranger21":
         optim_g = Ranger21(
@@ -618,7 +646,7 @@ def run(
         )
     elif optimizer_choice == "AdamW":
         optim_g = torch.optim.AdamW(
-            net_g.parameters(),
+            list(net_g.parameters()) + list(loss_balancer.parameters()),
         # Core hparams:
             lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
             betas = (0.8, 0.99),
@@ -800,12 +828,14 @@ def run(
             reference,
             fn_mel_loss,
             n_gpus,
+            loss_balancer,
         )
 
         if use_warmup and epoch <= warmup_duration:
             # Starts the warmup phase if warmup_duration =/= warmup_duration
             warmup_scheduler_g.step()
-            warmup_scheduler_d.step()
+            if not disable_discriminator:
+                warmup_scheduler_d.step()
 
             # Logging of finished warmup
             if epoch == warmup_duration:
@@ -821,7 +851,8 @@ def run(
         # Once the warmup phase is completed, uses exponential lr decay
         if not use_warmup or warmup_completed:
             decay_scheduler_g.step()
-            decay_scheduler_d.step()
+            if not disable_discriminator:
+                decay_scheduler_d.step()
 
 
 def train_and_evaluate(
@@ -840,6 +871,7 @@ def train_and_evaluate(
     reference,
     fn_mel_loss,
     n_gpus,
+    loss_balancer,
 ):
     """
     Trains and evaluates the model for one epoch.
@@ -942,33 +974,48 @@ def train_and_evaluate(
 
             # Discriminator forward pass:
             for _ in range(d_updates_per_step):  # default is 1 update per step
-                with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                    y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                if not disable_discriminator:
+                    with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
+                        y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
 
-                # Compute discriminator loss:
-                loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
+                    # Compute discriminator loss:
+                    loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
 
-                # Discriminator backward and update:
-                optim_d.zero_grad()
-                loss_disc.backward()
-                # 1. Retrieve raw grads norm
-                grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                if log_grads_every_step:
-                    grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
-                # 2. Grads norm clip
-                grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
-                # 3. Retrieve the clipped grads
-                grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                if log_grads_every_step:
-                    grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
-                # 4. Optimization step
-                optim_d.step()
+                    # Discriminator backward and update:
+                    optim_d.zero_grad()
+                    loss_disc.backward()
+                    # 1. Retrieve raw grads norm
+                    grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                    if log_grads_every_step:
+                        grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
+                    # 2. Grads norm clip
+                    grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
+                    # 3. Retrieve the clipped grads
+                    grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                    if log_grads_every_step:
+                        grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
+                    # 4. Optimization step
+                    optim_d.step()
+                else:
+                    loss_disc = torch.tensor(0.0, device=device)
+                    grad_norm_d_raw = 0.0
+                    grad_norm_d_clipped = 0.0
+                    #discriminator_adv_50
+
 
             # Run discriminator on generated output
             with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
-
+                if not disable_discriminator:
+                    if use_r_generator_loss:
+                        y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+                    else:
+                        _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+                else:
+                    if use_r_generator_loss:
+                        fmap_r, fmap_g, y_d_hat_g, y_d_hat_r = None, None, None, None
+                    else:
+                        fmap_r, fmap_g, y_d_hat_g = None, None, None
 
             # Compute generator losses:
             if use_multiscale_mel_loss:
@@ -995,11 +1042,28 @@ def train_and_evaluate(
                 y_mel = commons.slice_segments(mel, ids_slice, config.train.segment_size // config.data.hop_length, dim=3)
                 loss_mel = fn_mel_loss(y_mel, y_hat_mel)
 
+            if disable_discriminator: # Disc disabled
+                loss_fm = torch.tensor(0.0, device=device)
+                loss_gen = torch.tensor(0.0, device=device)
+            else: # Disc enabled
+                if disable_fm_loss:
+                    loss_fm = torch.tensor(0.0, device=device)
+                else:
                     loss_fm = feature_loss(fmap_r, fmap_g)
-                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-                    loss_gen = generator_loss(y_d_hat_g)
 
-                    loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
+                if use_r_generator_loss:
+                    if disable_gen_loss:
+                        loss_gen = torch.tensor(0.0, device=device)
+                    else:
+                        loss_gen = r_generator_loss(y_d_hat_r, y_d_hat_g)
+                else:
+                    if disable_gen_loss:
+                        loss_gen = torch.tensor(0.0, device=device)
+                    else:
+                        loss_gen = generator_loss(y_d_hat_g)
+
+            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+            loss_gen_all = loss_balancer(loss_mel, loss_fm, loss_gen) + loss_kl
 
 
             # Generator backward and update:
@@ -1027,7 +1091,7 @@ def train_and_evaluate(
                 epoch_loss_tensor[4].add_(loss_mel.detach())
                 epoch_loss_tensor[5].add_(loss_kl.detach())
 
-        # queue for rolling losses / grads over 50 steps
+            # queue for rolling losses / grads over 50 steps
             # Grads:
             avg_50_cache["grad_norm_d_raw_50"].append(grad_norm_d_raw)
             avg_50_cache["grad_norm_g_raw_50"].append(grad_norm_g_raw)
@@ -1093,25 +1157,25 @@ def train_and_evaluate(
     if rank == 0:
         with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
             # Used for tensorboard chart - all/mel
-        mel = spec_to_mel_torch(
-            spec,
-            config.data.filter_length,
-            config.data.n_mel_channels,
-            config.data.sample_rate,
-            config.data.mel_fmin,
-            config.data.mel_fmax,
-        )
+            mel = spec_to_mel_torch(
+                spec,
+                config.data.filter_length,
+                config.data.n_mel_channels,
+                config.data.sample_rate,
+                config.data.mel_fmin,
+                config.data.mel_fmax,
+            )
 
             # Used for tensorboard chart - slice/mel_org
-        if randomized:
-            y_mel = commons.slice_segments(
-                mel,
-                ids_slice,
-                config.train.segment_size // config.data.hop_length,
-                dim=3,
-            )
-        else:
-            y_mel = mel
+            if randomized:
+                y_mel = commons.slice_segments(
+                    mel,
+                    ids_slice,
+                    config.train.segment_size // config.data.hop_length,
+                    dim=3,
+                )
+            else:
+                y_mel = mel
 
         # used for tensorboard chart - slice/mel_gen
         with autocast(device_type="cuda", enabled=False):

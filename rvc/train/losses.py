@@ -54,6 +54,22 @@ def generator_loss(disc_outputs):
     return loss #, gen_losses
 
 
+def r_generator_loss(y_d_hat_r, y_d_hat_g):
+    """
+    Relativistic LSGAN Generator Loss:
+    Encourages D(fake) to be higher than D(real)
+    """
+    loss = 0
+    gen_losses = []
+
+    for dr, dg in zip(y_d_hat_r, y_d_hat_g):
+        l = torch.mean((dg - dr - 1) ** 2)
+        gen_losses.append(l.item())
+        loss += l
+
+    return loss
+
+
 def discriminator_loss_scaled(disc_real, disc_fake, scale=1.0):
     loss = 0
     for i, (d_real, d_fake) in enumerate(zip(disc_real, disc_fake)):
