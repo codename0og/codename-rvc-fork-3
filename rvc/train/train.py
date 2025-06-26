@@ -972,7 +972,7 @@ def train_and_evaluate(
 
             # Compute generator losses:
             if use_multiscale_mel_loss:
-                loss_mel = fn_mel_loss(wave, y_hat)
+                loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
             else:
                 y_hat_mel = mel_spectrogram_torch(
                     y_hat.float().squeeze(1),
@@ -993,7 +993,7 @@ def train_and_evaluate(
                     config.data.mel_fmax,
                 )
                 y_mel = commons.slice_segments(mel, ids_slice, config.train.segment_size // config.data.hop_length, dim=3)
-                loss_mel = fn_mel_loss(y_mel, y_hat_mel)
+                loss_mel = fn_mel_loss(y_mel, y_hat_mel) * config.train.c_mel
 
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
