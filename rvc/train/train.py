@@ -995,11 +995,11 @@ def train_and_evaluate(
                 y_mel = commons.slice_segments(mel, ids_slice, config.train.segment_size // config.data.hop_length, dim=3)
                 loss_mel = fn_mel_loss(y_mel, y_hat_mel)
 
-                    loss_fm = feature_loss(fmap_r, fmap_g)
-                    loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-                    loss_gen = generator_loss(y_d_hat_g)
+                loss_fm = feature_loss(fmap_r, fmap_g)
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+                loss_gen = generator_loss(y_d_hat_g)
 
-                    loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
+                loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
 
 
             # Generator backward and update:
@@ -1091,8 +1091,7 @@ def train_and_evaluate(
 
     # Logging and checkpointing
     if rank == 0:
-        with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-            # Used for tensorboard chart - all/mel
+        # Used for tensorboard chart - all/mel
         mel = spec_to_mel_torch(
             spec,
             config.data.filter_length,
@@ -1114,19 +1113,16 @@ def train_and_evaluate(
             y_mel = mel
 
         # used for tensorboard chart - slice/mel_gen
-        with autocast(device_type="cuda", enabled=False):
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.float().squeeze(1),
-                config.data.filter_length,
-                config.data.n_mel_channels,
-                config.data.sample_rate,
-                config.data.hop_length,
-                config.data.win_length,
-                config.data.mel_fmin,
-                config.data.mel_fmax,
-            )
-            if use_amp:
-                y_hat_mel =  y_hat_mel.to(torch.bfloat16)
+        y_hat_mel = mel_spectrogram_torch(
+            y_hat.float().squeeze(1),
+            config.data.filter_length,
+            config.data.n_mel_channels,
+            config.data.sample_rate,
+            config.data.hop_length,
+            config.data.win_length,
+            config.data.mel_fmin,
+            config.data.mel_fmax,
+        )
         # Mel similarity metric:
         mel_similarity = mel_spec_similarity(y_hat_mel, y_mel)
         print(f'Mel Spectrogram Similarity: {mel_similarity:.2f}%')
@@ -1174,14 +1170,13 @@ def train_and_evaluate(
 
         # Logging + sample-infer at " save every N epoch " spot:
         if epoch % save_every_epoch == 0:
-            with autocast(device_type="cuda", enabled=False):
-                net_g.eval()
-                with torch.no_grad():
-                    if hasattr(net_g, "module"):
-                        o, *_ = net_g.module.infer(*reference)
-                    else:
-                        o, *_ = net_g.infer(*reference)
-                net_g.train()
+            net_g.eval()
+            with torch.no_grad():
+                if hasattr(net_g, "module"):
+                    o, *_ = net_g.module.infer(*reference)
+                else:
+                    o, *_ = net_g.infer(*reference)
+            net_g.train()
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # Eval-infer samples
             summarize(
                 writer=writer,
