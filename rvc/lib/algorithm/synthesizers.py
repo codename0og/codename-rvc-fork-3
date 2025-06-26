@@ -116,7 +116,6 @@ class Synthesizer(torch.nn.Module):
                     gin_channels=gin_channels,
                     sr=sr,
                     checkpointing=checkpointing,
-                    is_half=kwargs["is_half"],
                 )
                 print("    ██████  Vocoder: NSF-HiFi-GAN.                        ██████")
         else:

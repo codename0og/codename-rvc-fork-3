@@ -24,7 +24,6 @@ class SourceModuleHnNSF(torch.nn.Module):
         sine_amp (float, optional): Amplitude of the sine wave components. Defaults to 0.1.
         add_noise_std (float, optional): Standard deviation of the additive white Gaussian noise. Defaults to 0.003.
         voiced_threshod (float, optional): Threshold for the fundamental frequency (F0) to determine if a frame is voiced. If F0 is below this threshold, it's considered unvoiced. Defaults to 0.
-        is_half (bool, optional): Whether to use half precision (bf16). Defaults to True.
     """
 
     def __init__(
@@ -34,13 +33,11 @@ class SourceModuleHnNSF(torch.nn.Module):
         sine_amp: float = 0.1,
         add_noise_std: float = 0.003,
         voiced_threshod: float = 0,
-        is_half: bool = True,
     ):
         super(SourceModuleHnNSF, self).__init__()
 
         self.sine_amp = sine_amp
         self.noise_std = add_noise_std
-        self.is_half = is_half
 
         self.l_sin_gen = SineGenerator(
             sample_rate, harmonic_num, sine_amp, add_noise_std, voiced_threshod
@@ -73,7 +70,6 @@ class HiFiGANNSFGenerator(torch.nn.Module):
         gin_channels (int): Number of input channels for the global conditioning. If 0, no global conditioning is used.
         sr (int): Sampling rate of the audio.
         checkpointing (bool, optional): Whether to use gradient checkpointing to save memory during training. Defaults to False.
-        is_half (bool, optional): Whether to use half precision. Defaults to False.
     """
 
     def __init__(
@@ -87,7 +83,6 @@ class HiFiGANNSFGenerator(torch.nn.Module):
         gin_channels: int,
         sr: int,
         checkpointing: bool = False,
-        is_half: bool = False,
     ):
         super(HiFiGANNSFGenerator, self).__init__()
 
@@ -95,7 +90,7 @@ class HiFiGANNSFGenerator(torch.nn.Module):
         self.num_upsamples = len(upsample_rates)
         self.checkpointing = checkpointing
         self.f0_upsamp = torch.nn.Upsample(scale_factor=math.prod(upsample_rates))
-        self.m_source = SourceModuleHnNSF(sample_rate=sr, harmonic_num=0, is_half=is_half)
+        self.m_source = SourceModuleHnNSF(sample_rate=sr, harmonic_num=0)
 
         self.conv_pre = torch.nn.Conv1d(
             initial_channel, upsample_initial_channel, 7, 1, padding=3

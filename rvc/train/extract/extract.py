@@ -107,7 +107,6 @@ class FeatureInput:
         if f0_method == "rmvpe":
             self.model_rmvpe = RMVPE0Predictor(
                 os.path.join("rvc", "models", "predictors", "rmvpe.pt"),
-                is_half=False,
                 device=device,
             )
         elif f0_method == "fcpe":
@@ -159,7 +158,6 @@ def run_pitch_extraction(files, devices, f0_method, hop_length, threads):
 def process_file_embedding(
     files, embedder_model, embedder_model_custom, device_num, device, n_threads
 ):
-    dtype = torch.bfloat16 if config.is_half and "cuda" in device else torch.float32
     model = load_embedding(embedder_model, embedder_model_custom).to(device).float()
     model.eval()
     n_threads = max(1, n_threads)

@@ -8,7 +8,7 @@
             0.99
         ],
         "eps": 1e-09,
-        "bf16_run": false,
+        "bf16_run": true,
         "lr_decay": 0.999875,
         "segment_size": 17280,
         "c_mel": 45,
