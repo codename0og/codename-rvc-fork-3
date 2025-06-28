@@ -153,14 +153,19 @@ torch.backends.cudnn.deterministic = use_deterministic
 
 # Globals ( tweakable )
 randomized = True
-log_grads_every_step = False # EXPERIMENTAL
-adv_weight = 1.0 # Default is 1.0 ~  If you wanna experiment with it, try anything within 0.5 - 2.0 range
+log_grads_every_step = False # EXPERIMENTAL - For debugging only
+debug_balancer = True # Logs the log_sigma for balancer
+
+adv_weight = 1.0 # EXPERIMENTAL ( Won't be utilized if balancer is in use. ) - Default is 1.0
 
 disable_discriminator = False
-use_r_generator_loss = False
-
 disable_fm_loss = False
 disable_gen_loss = False
+
+use_r_generator_loss = False # EXPERIMENTAL
+use_balancer = False # EXPERIMENTAL
+
+
 
 avg_50_cache = {
     "grad_norm_d_raw_50": deque(maxlen=50),
@@ -463,9 +468,15 @@ def run(
 
     # Training strategy checks:
     if d_updates_per_step == 2:
-        print("    ██████  Using double-update for D strategy            ██████")
+        print("    ██████  Double-update for Discriminator: Yes          ██████")
     else:
-        print("    ██████  Not using double-update for D strategy        ██████")
+        print("    ██████  Double-update for Discriminator: No           ██████")
+
+    if use_balancer:
+        print("    ██████  Uncertainty loss balancer: Yes                ██████")
+    else:
+        print("    ██████  Uncertainty loss balancer: No                 ██████")
+
 
     if rank == 0:
         writer_eval = SummaryWriter(
@@ -555,18 +566,20 @@ def run(
     class LossBalancer(nn.Module):
         def __init__(self):
             super().__init__()
-            # Initialize log_sigma to reflect approximate weights:
-            # mel ~45, fm ~1, adv ~1
-            self.log_sigma_mel = nn.Parameter(torch.tensor(-2.2499))  # roughly corresponds to weight ~45
-            self.log_sigma_fm = nn.Parameter(torch.tensor(0.0))     # no scaling initially
-            self.log_sigma_adv = nn.Parameter(torch.tensor(0.0))    # no scaling initially
+                # Initialize log_sigma to reflect approximate weights:
+                # weightings;  mel ~45, fm ~1 ( scaled *2 internally), adv ~1
 
-        def forward(self, loss_mel, loss_fm, loss_adv):
+            self.log_sigma_adv = nn.Parameter(torch.tensor(0.0))      # no scaling initially
+            self.log_sigma_mel = nn.Parameter(torch.tensor(-2.2499))  # roughly corresponds to weight ~45
+            self.log_sigma_fm = nn.Parameter(torch.tensor(0.0))       # no scaling initially
+
+        def forward(self, loss_adv, loss_mel, loss_fm):
+
+            weighted_adv = (1.0 / (2 * torch.exp(self.log_sigma_adv)**2)) * loss_adv + self.log_sigma_adv
             weighted_mel = (1.0 / (2 * torch.exp(self.log_sigma_mel)**2)) * loss_mel + self.log_sigma_mel
             weighted_fm = (1.0 / (2 * torch.exp(self.log_sigma_fm)**2)) * loss_fm + self.log_sigma_fm
-            weighted_adv = (1.0 / (2 * torch.exp(self.log_sigma_adv)**2)) * loss_adv + self.log_sigma_adv
 
-            return weighted_mel + weighted_fm + weighted_adv
+            return weighted_fm + weighted_adv
 
     loss_balancer = LossBalancer().to(device)
 
@@ -1019,7 +1032,10 @@ def train_and_evaluate(
 
             # Compute generator losses:
             if use_multiscale_mel_loss:
-                loss_mel = fn_mel_loss(wave, y_hat)
+                if not use_balancer:
+                    loss_mel = fn_mel_loss(wave, y_hat) * config.train.c_mel / 3.0
+                else:
+                    loss_mel = fn_mel_loss(wave, y_hat)
             else:
                 y_hat_mel = mel_spectrogram_torch(
                     y_hat.float().squeeze(1),
@@ -1040,7 +1056,10 @@ def train_and_evaluate(
                     config.data.mel_fmax,
                 )
                 y_mel = commons.slice_segments(mel, ids_slice, config.train.segment_size // config.data.hop_length, dim=3)
-                loss_mel = fn_mel_loss(y_mel, y_hat_mel)
+                if not use_balancer:
+                    loss_mel = fn_mel_loss(y_mel, y_hat_mel) * config.train.c_mel
+                else:
+                    loss_mel = fn_mel_loss(y_mel, y_hat_mel)
 
             if disable_discriminator: # Disc disabled
                 loss_fm = torch.tensor(0.0, device=device)
@@ -1063,8 +1082,17 @@ def train_and_evaluate(
                         loss_gen = generator_loss(y_d_hat_g)
 
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
-            loss_gen_all = loss_balancer(loss_mel, loss_fm, loss_gen) + loss_kl
 
+            if not use_balancer:
+                loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
+            else:
+                loss_gen_all = loss_balancer(loss_gen, loss_mel, loss_fm) + loss_kl
+
+            if debug_balancer:
+                if rank == 0:
+                    writer.add_scalar("Balancer/log_sigma_adv", loss_balancer.log_sigma_adv.item(), global_step)
+                    writer.add_scalar("Balancer/log_sigma_mel", loss_balancer.log_sigma_mel.item(), global_step)
+                    writer.add_scalar("Balancer/log_sigma_fm", loss_balancer.log_sigma_fm.item(), global_step)
 
             # Generator backward and update:
             optim_g.zero_grad()
@@ -1155,42 +1183,38 @@ def train_and_evaluate(
 
     # Logging and checkpointing
     if rank == 0:
-        with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-            # Used for tensorboard chart - all/mel
-            mel = spec_to_mel_torch(
-                spec,
-                config.data.filter_length,
-                config.data.n_mel_channels,
-                config.data.sample_rate,
-                config.data.mel_fmin,
-                config.data.mel_fmax,
-            )
+        # Used for tensorboard chart - all/mel
+        mel = spec_to_mel_torch(
+            spec,
+            config.data.filter_length,
+            config.data.n_mel_channels,
+            config.data.sample_rate,
+            config.data.mel_fmin,
+            config.data.mel_fmax,
+        )
 
-            # Used for tensorboard chart - slice/mel_org
-            if randomized:
-                y_mel = commons.slice_segments(
-                    mel,
-                    ids_slice,
-                    config.train.segment_size // config.data.hop_length,
-                    dim=3,
-                )
-            else:
-                y_mel = mel
+        # Used for tensorboard chart - slice/mel_org
+        if randomized:
+            y_mel = commons.slice_segments(
+                mel,
+                ids_slice,
+                config.train.segment_size // config.data.hop_length,
+                dim=3,
+            )
+        else:
+            y_mel = mel
 
         # used for tensorboard chart - slice/mel_gen
-        with autocast(device_type="cuda", enabled=False):
-            y_hat_mel = mel_spectrogram_torch(
-                y_hat.float().squeeze(1),
-                config.data.filter_length,
-                config.data.n_mel_channels,
-                config.data.sample_rate,
-                config.data.hop_length,
-                config.data.win_length,
-                config.data.mel_fmin,
-                config.data.mel_fmax,
-            )
-            if use_amp:
-                y_hat_mel =  y_hat_mel.to(torch.bfloat16)
+        y_hat_mel = mel_spectrogram_torch(
+            y_hat.float().squeeze(1),
+            config.data.filter_length,
+            config.data.n_mel_channels,
+            config.data.sample_rate,
+            config.data.hop_length,
+            config.data.win_length,
+            config.data.mel_fmin,
+            config.data.mel_fmax,
+        )
         # Mel similarity metric:
         mel_similarity = mel_spec_similarity(y_hat_mel, y_mel)
         print(f'Mel Spectrogram Similarity: {mel_similarity:.2f}%')
@@ -1238,14 +1262,13 @@ def train_and_evaluate(
 
         # Logging + sample-infer at " save every N epoch " spot:
         if epoch % save_every_epoch == 0:
-            with autocast(device_type="cuda", enabled=False):
-                net_g.eval()
-                with torch.no_grad():
-                    if hasattr(net_g, "module"):
-                        o, *_ = net_g.module.infer(*reference)
-                    else:
-                        o, *_ = net_g.infer(*reference)
-                net_g.train()
+            net_g.eval()
+            with torch.no_grad():
+                if hasattr(net_g, "module"):
+                    o, *_ = net_g.module.infer(*reference)
+                else:
+                    o, *_ = net_g.infer(*reference)
+            net_g.train()
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # Eval-infer samples
             summarize(
                 writer=writer,
