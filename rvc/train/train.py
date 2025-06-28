@@ -154,7 +154,7 @@ torch.backends.cudnn.deterministic = use_deterministic
 # Globals ( tweakable )
 randomized = True
 log_grads_every_step = False # EXPERIMENTAL - For debugging only
-debug_balancer = True # Logs the log_sigma for balancer
+debug_balancer = False # Logs the log_sigma for balancer
 
 adv_weight = 1.0 # EXPERIMENTAL ( Won't be utilized if balancer is in use. ) - Default is 1.0
 
@@ -1089,10 +1089,11 @@ def train_and_evaluate(
                 loss_gen_all = loss_balancer(loss_gen, loss_mel, loss_fm) + loss_kl
 
             if debug_balancer:
-                if rank == 0:
-                    writer.add_scalar("Balancer/log_sigma_adv", loss_balancer.log_sigma_adv.item(), global_step)
-                    writer.add_scalar("Balancer/log_sigma_mel", loss_balancer.log_sigma_mel.item(), global_step)
-                    writer.add_scalar("Balancer/log_sigma_fm", loss_balancer.log_sigma_fm.item(), global_step)
+                if use_balancer:
+                    if rank == 0:
+                        writer.add_scalar("Balancer/log_sigma_adv", loss_balancer.log_sigma_adv.item(), global_step)
+                        writer.add_scalar("Balancer/log_sigma_mel", loss_balancer.log_sigma_mel.item(), global_step)
+                        writer.add_scalar("Balancer/log_sigma_fm", loss_balancer.log_sigma_fm.item(), global_step)
 
             # Generator backward and update:
             optim_g.zero_grad()
