@@ -669,13 +669,13 @@ def train_tab():
                     use_multiscale_mel_loss = gr.Checkbox(
                         label="Use Multi-scale Mel loss function",
                         info="Multi-scale Mel loss function used for model training. \n Uncheck to use the less strict L1 Mel loss ( aka. single-scale ). \nTries to mirror mainline rvc results.",
-                        value=True,
+                        value=False,
                         interactive=True,
                     )
                     double_d_update = gr.Checkbox(
                         label="Double-update strategy for Discriminator",
                         info="Makes it so the Discriminator is being updated twice per step. \n Enabled by default.",
-                        value=True,
+                        value=False,
                         interactive=True,
                     )
             with gr.Column():

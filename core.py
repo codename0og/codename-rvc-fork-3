@@ -516,8 +516,8 @@ def run_train_script(
     use_tf32: bool = False,
     use_benchmark: bool = True,
     use_deterministic: bool = False,
-    use_multiscale_mel_loss: bool = True,
-    double_d_update: bool = True,
+    use_multiscale_mel_loss: bool = False,
+    double_d_update: bool = False,
     use_custom_lr: bool = False,
     custom_lr_g: float = 1e-4,
     custom_lr_d: float = 1e-4,
@@ -2129,14 +2129,14 @@ def parse_arguments():
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
         help="Lets you switch between a multi-scale mel loss and L1 single-scale loss.",
-        default=True,
+        default=False,
     )
     train_parser.add_argument(
         "--double_d_update",
         type=lambda x: bool(strtobool(x)),
         choices=[True, False],
         help="Whether you wanna use double-update strategy for Discriminator.",
-        default=True,
+        default=False,
     )
     train_parser.add_argument(
         "--use_custom_lr",
