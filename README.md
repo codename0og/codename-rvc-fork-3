@@ -81,7 +81,7 @@ This launches the Gradio interface in your default browser.
 ### 3. Optional: TensorBoard Monitoring
 
 To monitor training or visualize data:
-- Run the " run_tensorboard_in_model_folder.bat " file from logs folder and paste in there path to your model's folder </br>( containing 'eval' folder or tfevents file/s. ) 
+- Run the " run_tensorboard_in_model_folder.bat " file from logs folder and paste in there path to your model's folder </br>( containing 'eval' folder or tfevents file/s. )</br>If it doesn't work for you due to blocked port, open up CMD with admin rights and use this command:</br>`` netsh advfirewall firewall add rule name="Open Port 25565" dir=in action=allow protocol=TCP localport=25565 ``
 
 
 ## Disclaimer
