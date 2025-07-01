@@ -8,6 +8,7 @@ os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
 import glob
 import json
 import torch
+import torchaudio
 import datetime
 
 import math
@@ -55,10 +56,14 @@ from utils import (
 
 from losses import (
     discriminator_loss,
-    feature_loss,
     generator_loss,
-    r_generator_loss,
+    wgan_discriminator_loss,
+    wgan_generator_loss,
+    gradient_penalty,
+    feature_loss,
+    feature_loss_mask,
     kl_loss,
+
 )
 from mel_processing import (
     mel_spectrogram_torch,
@@ -67,12 +72,13 @@ from mel_processing import (
 )
 
 from rvc.train.process.extract_model import extract_model
-
 from rvc.lib.algorithm import commons
-
 from rvc.train.custom_optimizers.ranger21 import Ranger21
 
 import torch_optimizer
+
+from pesq import pesq
+import auraloss
 
 # Parse command line arguments start region ===========================
 
@@ -120,7 +126,6 @@ else:
 
 # Parse command line arguments end region ===========================
 
-
 current_dir = os.getcwd()
 experiment_dir = os.path.join(current_dir, "logs", model_name)
 config_save_path = os.path.join(experiment_dir, "config.json")
@@ -139,7 +144,6 @@ except FileNotFoundError:
 config.data.training_files = os.path.join(experiment_dir, "filelist.txt")
 
 
-
 # Globals ( do not touch these. )
 global_step = 0
 warmup_completed = False
@@ -152,38 +156,26 @@ torch.backends.cudnn.benchmark = use_benchmark
 torch.backends.cudnn.deterministic = use_deterministic
 
 # Globals ( tweakable )
+
 randomized = True
-log_grads_every_step = False # EXPERIMENTAL - For debugging only
-debug_balancer = False # Logs the log_sigma for balancer
+adv_weight = 1.0
 
-adv_weight = 1.0 # EXPERIMENTAL ( Won't be utilized if balancer is in use. ) - Default is 1.0
+log_grads_every_step = False # For debugging only
 
-disable_discriminator = False
-disable_fm_loss = False
-disable_gen_loss = False
+use_balancer = False # EXPERIMENTAL - Most lilely unstable.
+freeze_balancer_duration = 5 #  Corresponds to a number of epochs
+log_balancer = False # Logs the log_sigma for balancer
 
-use_r_generator_loss = False # EXPERIMENTAL
-use_balancer = False # EXPERIMENTAL
+use_silence_aware_fm_loss = False  # EXPERIMENTAL - Most lilely unstable.
 
+use_wgan_gp_loss = False  # EXPERIMENTAL - UNSTABLE
+gp_weight = 1.0
+precise_gp = True
 
-
-avg_50_cache = {
-    "grad_norm_d_raw_50": deque(maxlen=50),
-    "grad_norm_g_raw_50": deque(maxlen=50),
-    "grad_norm_d_clipped_50": deque(maxlen=50),
-    "grad_norm_g_clipped_50": deque(maxlen=50),
-    "discriminator_adv_50": deque(maxlen=50),
-    "generator_adv_50": deque(maxlen=50),
-    "generator_total_50": deque(maxlen=50),
-    "fm_50": deque(maxlen=50),
-    "mel_50": deque(maxlen=50),
-    "kl_50": deque(maxlen=50),
-}
 
 
 import logging
 logging.getLogger("torch").setLevel(logging.ERROR)
-
 
 # --------------------------   Custom functions land in here   --------------------------
 
@@ -248,6 +240,21 @@ def block_tensorboard_flush_on_exit(writer):
     signal.signal(signal.SIGINT, handler)   # for ' Ctrl+C '
     signal.signal(signal.SIGTERM, handler)  # for kill / terminate
 
+# Scale-Invariant Signal-to-Distortion Ratio ( SI-SDR ) scoring 
+def si_sdr(preds, target, eps=1e-8):
+    """Scale-Invariant SDR"""
+    preds = preds - preds.mean(dim=-1, keepdim=True)
+    target = target - target.mean(dim=-1, keepdim=True)
+
+    target_energy = (target ** 2).sum(dim=-1, keepdim=True)
+    scaling_factor = (preds * target).sum(dim=-1, keepdim=True) / (target_energy + eps)
+    projection = scaling_factor * target
+
+    noise = preds - projection
+
+    si_sdr_value = 10 * torch.log10((projection ** 2).sum(dim=-1) / (noise ** 2).sum(dim=-1) + eps)
+
+    return si_sdr_value.mean()
 
 # --------------------------   Custom functions End here   --------------------------
 
@@ -469,13 +476,25 @@ def run(
     # Training strategy checks:
     if d_updates_per_step == 2:
         print("    ██████  Double-update for Discriminator: Yes          ██████")
-    else:
-        print("    ██████  Double-update for Discriminator: No           ██████")
+        print(f"    ██████  Amount of D updates per step: {d_updates_per_step}              ██████")
 
+    # Uncertainty loss balancer checks:
     if use_balancer:
         print("    ██████  Uncertainty loss balancer: Yes                ██████")
+        if freeze_balancer_duration > 0:
+            print(f"    ██████  balancer frozen until epoch: {freeze_balancer_duration }               ██████")
     else:
         print("    ██████  Uncertainty loss balancer: No                 ██████")
+
+    # Losses checks:
+    if use_silence_aware_fm_loss:
+        print("    ██████  Using silence aware fm loss                   ██████")
+    if use_wgan_gp_loss:
+        if not precise_gp:
+            print("    ██████  Using WGAN-GP loss for G and D                ██████")
+        else:
+            print("    ██████  Using WGAN-GP loss for G and D ( precise )    ██████")
+
 
 
     if rank == 0:
@@ -506,13 +525,26 @@ def run(
         TextAudioLoaderMultiNSFsid,
     )
 
-    train_dataset = TextAudioLoaderMultiNSFsid(config.data)
+    full_dataset = TextAudioLoaderMultiNSFsid(config.data)
     collate_fn = TextAudioCollateMultiNSFsid()
+
+    # Split dataset
+    train_len = int(0.90 * len(full_dataset))
+    val_len = len(full_dataset) - train_len
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        full_dataset,
+        [train_len, val_len],
+        generator=torch.Generator().manual_seed(config.train.seed),
+    )
+
+    train_dataset.lengths = [full_dataset.lengths[i] for i in train_dataset.indices]
+    val_dataset.lengths = [full_dataset.lengths[i] for i in val_dataset.indices]
+
+    # Distributed sampler and loader for train set
     train_sampler = DistributedBucketSampler(
         train_dataset,
         batch_size * n_gpus,
         [50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
-        #[50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
         num_replicas=n_gpus,
         rank=rank,
         shuffle=True,
@@ -527,6 +559,25 @@ def run(
         batch_sampler=train_sampler,
         persistent_workers=True,
         prefetch_factor=8,
+    )
+
+    # Distributed sampler and loader for eval set
+    val_sampler = DistributedBucketSampler(
+        val_dataset,
+        batch_size * n_gpus,
+        [50, 100, 200, 300, 400, 500, 600, 700, 800, 900],
+        num_replicas=n_gpus,
+        rank=rank,
+        shuffle=False, # Off for validation purposes.
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_sampler=val_sampler,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=1,
+        pin_memory=True,
     )
 
     # train_loader safety check
@@ -564,116 +615,111 @@ def run(
 
 
     class LossBalancer(nn.Module):
-        def __init__(self):
+        def __init__(self, freeze_until_epoch=3, freeze_list=None):
             super().__init__()
-                # Initialize log_sigma to reflect approximate weights:
-                # weightings;  mel ~45, fm ~1 ( scaled *2 internally), adv ~1
 
-            self.log_sigma_adv = nn.Parameter(torch.tensor(0.0))      # no scaling initially
-            self.log_sigma_mel = nn.Parameter(torch.tensor(-2.2499))  # roughly corresponds to weight ~45
-            self.log_sigma_fm = nn.Parameter(torch.tensor(0.0))       # no scaling initially
+            self.freeze_until_epoch = freeze_until_epoch
+            self.freeze_list = freeze_list or []
 
-        def forward(self, loss_adv, loss_mel, loss_fm):
+            # Initialize raw log_sigma values
+            # PS. use this formula to convert * weight to log sigma:  -0.5 * log(2 * W)
+            self.log_sigma_adv = nn.Parameter(torch.tensor(-0.3466))   # ≈ 1.0
+            self.log_sigma_mel = nn.Parameter(torch.tensor(-2.2499))   # ≈ 45.0
+            self.log_sigma_fm  = nn.Parameter(torch.tensor(-0.6931))   # ≈ 2.0
+            self.log_sigma_kl  = nn.Parameter(torch.tensor(-0.3466))   # ≈ 1.0
 
-            weighted_adv = (1.0 / (2 * torch.exp(self.log_sigma_adv)**2)) * loss_adv + self.log_sigma_adv
-            weighted_mel = (1.0 / (2 * torch.exp(self.log_sigma_mel)**2)) * loss_mel + self.log_sigma_mel
-            weighted_fm = (1.0 / (2 * torch.exp(self.log_sigma_fm)**2)) * loss_fm + self.log_sigma_fm
+            # Init values to reuse during warmup
+            self.fixed_log_sigmas = {
+                "adv": -0.3466,
+                "mel": -2.2499,
+                "fm": -0.6931,
+                "kl": -0.3466
+            }
 
-            return weighted_fm + weighted_adv
+        def forward(self, loss_adv, loss_mel, loss_fm, loss_kl, epoch):
+            log_sigmas = {}
 
-    loss_balancer = LossBalancer().to(device)
+            for name in ["adv", "mel", "fm", "kl"]:
+                param = getattr(self, f"log_sigma_{name}")
+                if epoch < self.freeze_until_epoch and name in self.freeze_list:
+                    log_sigmas[name] = torch.tensor(self.fixed_log_sigmas[name], device=param.device)
+                else:
+                    log_sigmas[name] = param
+
+            weighted_adv = (1.0 / (2 * torch.exp(log_sigmas["adv"])**2)) * loss_adv + log_sigmas["adv"]
+            weighted_mel = (1.0 / (2 * torch.exp(log_sigmas["mel"])**2)) * loss_mel + log_sigmas["mel"]
+            weighted_fm  = (1.0 / (2 * torch.exp(log_sigmas["fm"])**2))  * loss_fm  + log_sigmas["fm"]
+            weighted_kl  = (1.0 / (2 * torch.exp(log_sigmas["kl"])**2))  * loss_kl  + log_sigmas["kl"]
+
+            return weighted_adv + weighted_mel + weighted_fm + weighted_kl
+
+    loss_balancer = LossBalancer(
+        freeze_until_epoch=freeze_balancer_duration,
+        freeze_list=["adv", "mel", "fm", "kl"]
+    ).to(device)
 
 
-        # OPTIMIZER INIT:
+    # Needed for the uncertainty weighted loss balancer ( Doesn't matter which optim's in use. )
+    gen_params = list(net_g.parameters())
+    if use_balancer:
+        gen_params += list(loss_balancer.parameters())
+
+    # Base / Common kwargs for gen and disc
+    common_args_g = dict(
+        lr=custom_lr_g if use_custom_lr else config.train.learning_rate,
+        betas=(0.8, 0.99),
+        eps=1e-9,
+        weight_decay=0,
+    )
+    common_args_d = dict(
+        lr=custom_lr_d if use_custom_lr else config.train.learning_rate,
+        betas=(0.8, 0.99),
+        eps=1e-9,
+        weight_decay=0,
+    )
+
     if optimizer_choice == "Ranger21":
-        optim_g = Ranger21(
-            net_g.parameters(),
-        # Core hparams:
-            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
-            num_epochs = custom_total_epoch,
-            num_batches_per_epoch = len(train_loader),
-        # Engine settings ( If both are false, AdamW is used):
-            use_madgrad = False,
-        # EXTRAS level 1:
-            use_warmup = False,
-            warmdown_active = False,
-            use_cheb = False,
-            lookahead_active = True,
-        # EXTRAS level 2:
-            normloss_active = False,
-            normloss_factor = 1e-4,
+        extra_args = dict(
+            num_epochs=custom_total_epoch,
+            num_batches_per_epoch=len(train_loader),
+            use_madgrad=False,
+            use_warmup=False,
+            warmdown_active=False,
+            use_cheb=False,
+            lookahead_active=True,
+            normloss_active=False,
+            normloss_factor=1e-4,
             softplus=False,
-            use_adaptive_gradient_clipping = True,
-            agc_clipping_value = 0.01,
+            use_adaptive_gradient_clipping=True,
+            agc_clipping_value=0.01,
             agc_eps=1e-3,
-            using_gc = True,
+            using_gc=True,
             gc_conv_only=True,
             using_normgc=False,
         )
-        optim_d = Ranger21(
-            net_d.parameters(),
-        # Core hparams:
-            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
-            num_epochs = custom_total_epoch,
-            num_batches_per_epoch = len(train_loader),
-        # Engine settings ( If both are false, AdamW is used):
-            use_madgrad = False,
-        # EXTRAS level 1:
-            use_warmup = False,
-            warmdown_active = False,
-            use_cheb = False,
-            lookahead_active = True,
-        # EXTRAS level 2:
-            normloss_active = False,
-            normloss_factor = 1e-4,
-            softplus=False,
-            use_adaptive_gradient_clipping = True,
-            agc_clipping_value = 0.01,
-            agc_eps=1e-3,
-            using_gc = True,
-            gc_conv_only=True,
-            using_normgc=False,
-        )
+        optim_g = Ranger21(gen_params, **common_args_g, **extra_args)
+        optim_d = Ranger21(net_d.parameters(), **common_args_d, **extra_args)
+
     elif optimizer_choice == "RAdam":
-        optim_g = torch_optimizer.RAdam(
-            net_g.parameters(),
-        # Core hparams:
-            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
-        )
-        optim_d = torch_optimizer.RAdam(
-            net_d.parameters(),
-        # Core hparams:
-            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
-        )
+        optim_g = torch_optimizer.RAdam(gen_params, **common_args_g)
+        optim_d = torch_optimizer.RAdam(net_d.parameters(), **common_args_d)
+
     elif optimizer_choice == "AdamW":
-        optim_g = torch.optim.AdamW(
-            list(net_g.parameters()) + list(loss_balancer.parameters()),
-        # Core hparams:
-            lr = custom_lr_g if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
+        optim_g = torch.optim.AdamW(gen_params, **common_args_g)
+        optim_d = torch.optim.AdamW(net_d.parameters(), **common_args_d)
+
+    '''
+    - Template for adding custom optims:
+
+    elif optimizer_choice =="new_optim":
+        extra_args = dict(
+            first = 0.123,
+            second = 123,
+            third = 0.123123,
         )
-        optim_d = torch.optim.AdamW(
-            net_d.parameters(),
-        # Core hparams:
-            lr = custom_lr_d if use_custom_lr else config.train.learning_rate,
-            betas = (0.8, 0.99),
-            eps = 1e-9,
-            weight_decay=0,
-        )
+        optim_g = new_optim(gen_params, **common_args_g, **extra_args)
+        optim_d = new_optim(net_d.parameters(), **common_args_d, **extra_args)
+    '''
 
     if use_multiscale_mel_loss:
         fn_mel_loss = MultiScaleMelSpectrogramLoss(sample_rate=sample_rate)
@@ -681,7 +727,8 @@ def run(
     else:
         fn_mel_loss = torch.nn.L1Loss()
         print("    ██████  Using Single-Scale (L1) Mel loss function     ██████")
-        
+
+
     # Wrap models with DDP for multi-gpu processing
     if n_gpus > 1 and device.type == "cuda":
         net_g = DDP(net_g, device_ids=[device_id]) # find_unused_parameters=True)
@@ -786,7 +833,7 @@ def run(
     cache = []
 
     if use_custom_ref:
-        print("   Using custom reference input from 'logs\\reference\\'")
+        print("Using custom reference input from 'logs\\reference\\'")
 
         # Load and process
         phone = np.load(os.path.join(reference_path, "ref_feats.npy"))
@@ -825,13 +872,13 @@ def run(
         )
 
     for epoch in range(epoch_str, total_epoch + 1):
-        train_and_evaluate(
+        training_loop(
             rank,
             epoch,
             config,
             [net_g, net_d],
             [optim_g, optim_d],
-            [train_loader, None],
+            [train_loader, val_loader],
             [writer_eval],
             cache,
             custom_save_every_weights,
@@ -847,8 +894,7 @@ def run(
         if use_warmup and epoch <= warmup_duration:
             # Starts the warmup phase if warmup_duration =/= warmup_duration
             warmup_scheduler_g.step()
-            if not disable_discriminator:
-                warmup_scheduler_d.step()
+            warmup_scheduler_d.step()
 
             # Logging of finished warmup
             if epoch == warmup_duration:
@@ -864,11 +910,10 @@ def run(
         # Once the warmup phase is completed, uses exponential lr decay
         if not use_warmup or warmup_completed:
             decay_scheduler_g.step()
-            if not disable_discriminator:
-                decay_scheduler_d.step()
+            decay_scheduler_d.step()
 
 
-def train_and_evaluate(
+def training_loop(
     rank,
     epoch,
     hps,
@@ -905,6 +950,8 @@ def train_and_evaluate(
     net_g, net_d = nets
     optim_g, optim_d = optims
     train_loader = loaders[0] if loaders is not None else None
+    val_loader = loaders[1] if loaders is not None and len(loaders) > 1 else None
+
     if writers is not None:
         writer = writers[0]
 
@@ -930,9 +977,29 @@ def train_and_evaluate(
 
     if not from_scratch:
         # Tensors init for averaged losses:
-        epoch_loss_tensor = torch.zeros(6, device=device)
-        multi_epoch_loss_tensor = torch.zeros(6, device=device)
+        tensor_count = 6
+        if use_wgan_gp_loss:
+            tensor_count = 8
+
+        epoch_loss_tensor = torch.zeros(tensor_count, device=device)
+        multi_epoch_loss_tensor = torch.zeros(tensor_count, device=device)
         num_batches_in_epoch = 0
+
+    avg_50_cache = {
+        "grad_norm_d_raw_50": deque(maxlen=50),
+        "grad_norm_g_raw_50": deque(maxlen=50),
+        "grad_norm_d_clipped_50": deque(maxlen=50),
+        "grad_norm_g_clipped_50": deque(maxlen=50),
+        "discriminator_adv_50": deque(maxlen=50),
+        "generator_adv_50": deque(maxlen=50),
+        "generator_total_50": deque(maxlen=50),
+        "fm_50": deque(maxlen=50),
+        "mel_50": deque(maxlen=50),
+        "kl_50": deque(maxlen=50),
+    }
+    if use_wgan_gp_loss:
+        avg_50_cache["wasserstein_distance_50"] = deque(maxlen=50)
+        avg_50_cache["gradient_penalty_50"] = deque(maxlen=50)
 
     if log_grads_every_step:
         # buffering for logging of grads:
@@ -987,48 +1054,43 @@ def train_and_evaluate(
 
             # Discriminator forward pass:
             for _ in range(d_updates_per_step):  # default is 1 update per step
-                if not disable_discriminator:
-                    with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                        y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
+                with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
+                    y_d_hat_r, y_d_hat_g, _, _ = net_d(wave, y_hat.detach())
 
-                    # Compute discriminator loss:
+                # Compute discriminator loss:
+                if not use_wgan_gp_loss:
                     loss_disc = discriminator_loss(y_d_hat_r, y_d_hat_g)
-
-
-                    # Discriminator backward and update:
-                    optim_d.zero_grad()
-                    loss_disc.backward()
-                    # 1. Retrieve raw grads norm
-                    grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                    if log_grads_every_step:
-                        grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
-                    # 2. Grads norm clip
-                    grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
-                    # 3. Retrieve the clipped grads
-                    grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
-                    if log_grads_every_step:
-                        grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
-                    # 4. Optimization step
-                    optim_d.step()
                 else:
-                    loss_disc = torch.tensor(0.0, device=device)
-                    grad_norm_d_raw = 0.0
-                    grad_norm_d_clipped = 0.0
-                    #discriminator_adv_50
+                    loss_disc = wgan_discriminator_loss(y_d_hat_r, y_d_hat_g)
+
+                    d_real = torch.mean(torch.stack([dr.mean().detach() for dr in y_d_hat_r]))
+                    d_fake = torch.mean(torch.stack([dg.mean().detach() for dg in y_d_hat_g]))
+                    wasserstein_distance = d_real - d_fake
+
+                    gp = gradient_penalty(net_d, wave, y_hat.detach(), device, average_all_outputs=precise_gp)
+                    loss_disc = loss_disc + gp_weight * gp
+
+                # Discriminator backward and update:
+                optim_d.zero_grad()
+                loss_disc.backward()
+                # 1. Retrieve raw grads norm
+                grad_norm_d_raw = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                if log_grads_every_step:
+                    grad_log_buffer["grad/norm_d_raw_step"].append((global_step, grad_norm_d_raw))
+                # 2. Grads norm clip
+                grad_norm_d = torch.nn.utils.clip_grad_norm_(net_d.parameters(), max_norm=999999) # 1000 / 999999
+                # 3. Retrieve the clipped grads
+                grad_norm_d_clipped = commons.get_total_norm([p.grad for p in net_d.parameters() if p.grad is not None], norm_type=2.0, error_if_nonfinite=True)
+                if log_grads_every_step:
+                    grad_log_buffer["grad/norm_d_raw_step_clipped"].append((global_step, grad_norm_d_clipped))
+                # 4. Optimization step
+                optim_d.step()
 
 
             # Run discriminator on generated output
             with autocast(device_type="cuda", enabled=use_amp, dtype=torch.bfloat16):
-                if not disable_discriminator:
-                    if use_r_generator_loss:
-                        y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
-                    else:
-                        _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
-                else:
-                    if use_r_generator_loss:
-                        fmap_r, fmap_g, y_d_hat_g, y_d_hat_r = None, None, None, None
-                    else:
-                        fmap_r, fmap_g, y_d_hat_g = None, None, None
+                _, y_d_hat_g, fmap_r, fmap_g = net_d(wave, y_hat)
+
 
             # Compute generator losses:
             if use_multiscale_mel_loss:
@@ -1061,39 +1123,51 @@ def train_and_evaluate(
                 else:
                     loss_mel = fn_mel_loss(y_mel, y_hat_mel)
 
-            if disable_discriminator: # Disc disabled
-                loss_fm = torch.tensor(0.0, device=device)
-                loss_gen = torch.tensor(0.0, device=device)
-            else: # Disc enabled
-                if disable_fm_loss:
-                    loss_fm = torch.tensor(0.0, device=device)
-                else:
+            # Feature Matching loss
+            if not use_balancer:
+                loss_fm = feature_loss(fmap_r, fmap_g) * 2.0 # Previously was * 2 internally, moved outside for the sake of balancer.
+            else:
+                if not use_silence_aware_fm_loss:
                     loss_fm = feature_loss(fmap_r, fmap_g)
-
-                if use_r_generator_loss:
-                    if disable_gen_loss:
-                        loss_gen = torch.tensor(0.0, device=device)
-                    else:
-                        loss_gen = r_generator_loss(y_d_hat_r, y_d_hat_g)
                 else:
-                    if disable_gen_loss:
-                        loss_gen = torch.tensor(0.0, device=device)
-                    else:
-                        loss_gen = generator_loss(y_d_hat_g)
+                    with torch.no_grad():
+                        energy = wave.abs().mean(dim=[1, 2])
+                        silence_mask = (energy / (energy.max() + 1e-6)).clamp(min=0.05, max=1.0)  # min vals: 0 - full silence masking, 0.05 - safe default, 0.10 for fuzzy / or breathy silence.
+                    loss_fm = feature_loss_mask(fmap_r, fmap_g, silence_mask=silence_mask)
 
-            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+            # Generator loss 
+            if not use_wgan_gp_loss:
+                loss_gen = generator_loss(y_d_hat_g)
+            else:
+                loss_gen = wgan_generator_loss(y_d_hat_g)
 
+            # KL ( Kullback–Leibler divergence ) loss
+            if not use_balancer:
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * config.train.c_kl
+            else:
+                loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask)
+
+            # Total generator loss
             if not use_balancer:
                 loss_gen_all = ( loss_gen * adv_weight ) + loss_fm + loss_mel + loss_kl
             else:
-                loss_gen_all = loss_balancer(loss_gen, loss_mel, loss_fm) + loss_kl
+                loss_gen_all = loss_balancer(loss_gen, loss_mel, loss_fm, loss_kl, epoch) 
 
-            if debug_balancer:
-                if use_balancer:
-                    if rank == 0:
-                        writer.add_scalar("Balancer/log_sigma_adv", loss_balancer.log_sigma_adv.item(), global_step)
-                        writer.add_scalar("Balancer/log_sigma_mel", loss_balancer.log_sigma_mel.item(), global_step)
-                        writer.add_scalar("Balancer/log_sigma_fm", loss_balancer.log_sigma_fm.item(), global_step)
+            # Logging of the balancer and optionally silence
+            if log_balancer and use_balancer and rank == 0:
+                if use_silence_aware_fm_loss:
+                    silence_ratio = 1.0 - silence_mask.mean().item()
+                    writer.add_scalar("Debug/silence_ratio", silence_ratio, global_step)
+                loss_map = {"adv": loss_gen, "mel": loss_mel, "fm":  loss_fm, "kl":  loss_kl}
+                for name in ["adv", "mel", "fm", "kl"]:
+                    log_sigma = getattr(loss_balancer, f"log_sigma_{name}")
+                    sigma = torch.exp(log_sigma)
+                    weight = 1 / (2 * sigma ** 2)
+                    contribution = weight * loss_map[name].detach()
+                    writer.add_scalar(f"Balancer/log_sigma_{name}", log_sigma.item(), global_step)
+                    writer.add_scalar(f"Balancer/weight_{name}", weight.item(), global_step)
+                    writer.add_scalar(f"Balancer/contribution_{name}", contribution.item(), global_step)
+
 
             # Generator backward and update:
             optim_g.zero_grad()
@@ -1119,6 +1193,9 @@ def train_and_evaluate(
                 epoch_loss_tensor[3].add_(loss_fm.detach())
                 epoch_loss_tensor[4].add_(loss_mel.detach())
                 epoch_loss_tensor[5].add_(loss_kl.detach())
+                if use_wgan_gp_loss:
+                    epoch_loss_tensor[6].add_(wasserstein_distance.detach())
+                    epoch_loss_tensor[7].add_(gp.detach())
 
             # queue for rolling losses / grads over 50 steps
             # Grads:
@@ -1133,6 +1210,9 @@ def train_and_evaluate(
             avg_50_cache["fm_50"].append(loss_fm.detach())
             avg_50_cache["mel_50"].append(loss_mel.detach())
             avg_50_cache["kl_50"].append(loss_kl.detach())
+            if use_wgan_gp_loss:
+                avg_50_cache["wasserstein_distance_50"].append(wasserstein_distance.detach())
+                avg_50_cache["gradient_penalty_50"].append(gp.detach())
 
             if rank == 0 and global_step % 50 == 0:
                 scalar_dict_50 = {}
@@ -1169,6 +1249,13 @@ def train_and_evaluate(
                     "loss_avg_50/kl_50": torch.mean(
                         torch.stack(list(avg_50_cache["kl_50"]))),
                 })
+                if use_wgan_gp_loss:
+                    scalar_dict_50["WGAN_Metrics/wasserstein_distance_50"] = torch.mean(
+                        torch.stack(list(avg_50_cache["wasserstein_distance_50"]))
+                    )
+                    scalar_dict_50["WGAN_Metrics/gradient_penalty_50"] = torch.mean(
+                        torch.stack(list(avg_50_cache["gradient_penalty_50"]))
+                    )
                 summarize(writer=writer, global_step=global_step, scalars=scalar_dict_50)
                 flush_writer(writer, rank)
 
@@ -1239,6 +1326,11 @@ def train_and_evaluate(
             "learning_rate/lr_d": lr_d,
             "learning_rate/lr_g": lr_g,
             }
+
+            if use_wgan_gp_loss:
+                scalar_dict_avg["wgan_metrics_avg/wasserstein_distance"] = avg_epoch_loss[6]
+                scalar_dict_avg["wgan_metrics_avg/gradient_penalty"] = avg_epoch_loss[7]
+
             summarize(writer=writer, global_step=global_step, scalars=scalar_dict_avg)
             flush_writer(writer, rank)
             num_batches_in_epoch = 0
@@ -1253,16 +1345,23 @@ def train_and_evaluate(
                 grad_step_log_buffer = {k: [] for k in grad_step_log_buffer}
 
         image_dict = {
-            #"slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().numpy()),
-            #"slice/mel_gen": plot_spectrogram_to_numpy(y_hat_mel[0].detach().cpu().numpy()),
-            #"all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().numpy()),
             "slice/mel_org": plot_spectrogram_to_numpy(y_mel[0].detach().cpu().to(torch.float32).numpy()),
             "slice/mel_gen": plot_spectrogram_to_numpy(y_hat_mel[0].detach().cpu().to(torch.float32).numpy()),
             "all/mel": plot_spectrogram_to_numpy(mel[0].detach().cpu().to(torch.float32).numpy()),
         }
 
-        # Logging + sample-infer at " save every N epoch " spot:
+        # At each epoch save point:
         if epoch % save_every_epoch == 0:
+            # Running validation
+            validation_loop(
+                net_g.module if hasattr(net_g, "module") else net_g,
+                val_loader,
+                device,
+                hps,
+                writer,
+                global_step,
+            )
+            # Inferencing on reference sample
             net_g.eval()
             with torch.no_grad():
                 if hasattr(net_g, "module"):
@@ -1271,6 +1370,7 @@ def train_and_evaluate(
                     o, *_ = net_g.infer(*reference)
             net_g.train()
             audio_dict = {f"gen/audio_{global_step:07d}": o[0, :, :]} # Eval-infer samples
+            # Logging
             summarize(
                 writer=writer,
                 global_step=global_step,
@@ -1373,6 +1473,110 @@ def train_and_evaluate(
 
         with torch.no_grad():
             torch.cuda.empty_cache()
+
+
+def validation_loop(net_g, val_loader, device, hps, writer, global_step):
+    net_g.eval()
+    torch.cuda.empty_cache()
+
+    total_mel_error = 0.0
+    total_mrstft_loss = 0.0
+    total_pesq = 0.0
+    valid_pesq_count = 0
+    total_si_sdr = 0.0
+    count = 0
+
+    mrstft = auraloss.freq.MultiResolutionSTFTLoss(device=device)
+    resample_to_16k = torchaudio.transforms.Resample(orig_freq=hps.data.sample_rate, new_freq=16000).to(device)
+
+    hop_length = hps.data.hop_length
+    sample_rate = hps.data.sample_rate
+
+    with torch.no_grad():
+        for batch in tqdm(val_loader, desc="Validating"):
+            phone, phone_lengths, pitch, pitchf, spec, spec_lengths, wave, _, sid = [
+                t.to(device) for t in batch
+            ]
+
+            # Infer
+            y_hat, x_mask, _ = net_g.infer(phone, phone_lengths, pitch, pitchf, sid)
+
+            wave_len = wave.shape[-1]
+
+            y_hat_mel = mel_spectrogram_torch(
+                y_hat.squeeze(1),
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                sample_rate,
+                hop_length,
+                hps.data.win_length,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
+            mel = spec_to_mel_torch(
+                spec,
+                hps.data.filter_length,
+                hps.data.n_mel_channels,
+                sample_rate,
+                hps.data.mel_fmin,
+                hps.data.mel_fmax,
+            )
+
+            # Mel loss:
+            y_hat_mel_len = y_hat_mel.shape[-1]
+            mel_len = mel.shape[-1]
+
+            min_t = min(y_hat_mel_len, mel_len)
+
+            mel_loss = F.l1_loss(y_hat_mel[..., :min_t], mel[..., :min_t])
+            total_mel_error += mel_loss.item()
+
+            # STFT loss:
+            y_hat_len = y_hat.shape[-1]
+
+            min_samples = min_t * hop_length
+            min_samples = min(min_samples, wave_len, y_hat_len)
+
+            stft_loss = mrstft(y_hat[..., :min_samples], wave[..., :min_samples])
+            total_mrstft_loss += stft_loss.item()
+
+            # si_sdr:
+            si_sdr_score = si_sdr(y_hat.squeeze(1), wave.squeeze(1))
+            total_si_sdr += si_sdr_score.item()
+
+            # PESQ:
+            try:
+                y_16k_batch = resample_to_16k(wave).cpu().numpy()          # (B, T)
+                y_hat_16k_batch = resample_to_16k(y_hat.squeeze(1)).cpu().numpy()  # (B, T)
+
+                for i in range(y_16k_batch.shape[0]):
+                    y_16k_f = np.squeeze(y_16k_batch[i]).astype(np.float32)
+                    y_hat_16k_f = np.squeeze(y_hat_16k_batch[i]).astype(np.float32)
+
+                    try:
+                        pesq_score = pesq(16000, y_16k_f, y_hat_16k_f, mode="wb")
+                        total_pesq += pesq_score
+                        valid_pesq_count += 1
+                    except Exception as e:
+                        print(f"[PESQ skipped] {e}")
+
+            except Exception as e:
+                print(f"[PESQ skipped outer] {e}")
+
+            count += 1
+
+    avg_mel = total_mel_error / count
+    avg_mrstft = total_mrstft_loss / count
+    avg_pesq = total_pesq / max(valid_pesq_count, 1)
+    avg_si_sdr = total_si_sdr / count
+
+    if writer is not None:
+        writer.add_scalar("validation/loss/mel_l1", avg_mel, global_step)
+        writer.add_scalar("validation/loss/mrstft", avg_mrstft, global_step)
+        writer.add_scalar("validation/score/pesq", avg_pesq, global_step)
+        writer.add_scalar("validation/score/si_sdr", avg_si_sdr, global_step)
+
+    net_g.train()
 
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn")
