@@ -1,15 +1,11 @@
 # <p align="center">` Codename-RVC-Fork 🍇 3 ` </p>
 ## <p align="center">Based on Applio</p>
 
-<p align="center"> ㅤㅤ👇 Applio's official links below 👇ㅤㅤ </p>
+<p align="center"> ㅤㅤ👇 You can join my RVC / Audio AI friendly server below 👇ㅤㅤ </p>
 
 </p>
 <p align="center">
-  <a href="https://applio.org" target="_blank">🌐 Website</a>
-  •
-  <a href="https://docs.applio.org" target="_blank">📚 Documentation</a>
-  •
-  <a href="https://discord.gg/urxFjYmYYh" target="_blank">☎️ Discord</a>
+  > WIP < 🌐 RVC HUB</a>
 </p>
 
 
@@ -22,7 +18,12 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Support for 'Spin' and perhaps soon.. wavlm feature extraction.  ` Needs proper pretrains. They are in work. `
+- Validation mechanism during training. ( L1 MEL, mrSTFT, PESQ, SI-SDR )  ` In between epochs. `
+ 
+- BF16-AMP, TF32, FP32 Training modes available.  ` BF16 & TF32 require Ampere or newer GPUs. `
+> NOTE: BF16 is used by default. If unsupported hardware detected, switched back to FP32. Inference is only in FP32.
+ 
+- Support for 'Spin' ( Ain't sure of wavlm anymore).  ` Needs proper pretrains. `
  
 - Ability to choose an optimizer.  ` ( Currently supporting: AdamW, RAdam, Ranger21 ) `
  
@@ -32,7 +33,7 @@
  
 - Mel spectrogram %-based similarity metric.
  
-- Choice of using either Multi-scale mel loss or classic L1.  ` ( Optimized. ) `
+- Choice of using either Multi-scale mel loss or classic L1.
  
 - Support for the following vocoders: HiFi-GAN, MRF-HiFi-gan and Refine-GAN.  ` ( And their respective pretrains. ) `
  
@@ -54,40 +55,34 @@
 > - Ability to choose lr_decay from the ui.
  
 💡 Ideas / concepts 💡
-> - Propably improving the mel-similarity.. or generally expanding the idea.
+> - ~~Propably improving the mel-similarity.. or generally expanding the idea.~~ Irrelevant. Functionality taken over by validation mechanism.
 > - and more.. perhaps ..
  
  
-### ❗ For contact, please use AI HUB by Weights discord server ❗
+### ~~❗ For contact, please use RVC HUB discord server ❗~~ WIP. For now use my discord: .codename.0.
  
  
 ## Getting Started:
 
 ### 1. Installation of the Fork
 
-Run the installation script based on your operating system:
+Run the installation script:
 
-- **Windows:** Double-click `run-install.bat`.
-- **Linux/macOS:** Execute `run-install.sh`.
+- Double-click `run-install.bat`.
 
 ### 2. Running the Fork
 
 Start Applio using:
 
-- **Windows:** Double-click `run-fork.bat`.
-- **Linux/macOS:** Run `run-fork.sh`.
-> In cases of having inference errors / issues on MacBooks or other M1, M2 and M3 devices: <br/>Uncomment the " export OMP_NUM_THREADS=1 " line in in the " run-fork.sh " file.
+- Double-click `run-fork.bat`.
  
 This launches the Gradio interface in your default browser.
 
 ### 3. Optional: TensorBoard Monitoring
 
 To monitor training or visualize data:
+- Run the " run_tensorboard_in_model_folder.bat " file from logs folder and paste in there path to your model's folder </br>( containing 'eval' folder or tfevents file/s. ) 
 
-- **Windows:** Run `run-tensorboard.bat`.
-- **Linux/macOS:** Run `run-tensorboard.sh`.
-
-For more detailed instructions, visit the [documentation](https://docs.applio.org).
 
 ## Disclaimer
 ``The creators of the original Applio repository, Applio's contributors, and the maintainer of this fork (Codename;0), built upon Applio, are not responsible for any legal issues, damages, or consequences arising from the use of this repository or the content generated from it. By using this fork, you acknowledge that:``
