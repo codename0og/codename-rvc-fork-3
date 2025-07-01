@@ -59,7 +59,7 @@
 > - and more.. perhaps ..
  
  
-### ~~❗ For contact, please use RVC HUB discord server ❗~~ WIP. For now use my discord: .codename.0.
+### ~~❗ For contact, please use RVC HUB discord server ❗~~ WIP. For now use my discord: .codename0.
  
  
 ## Getting Started:
