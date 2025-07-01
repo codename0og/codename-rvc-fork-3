@@ -18,7 +18,7 @@
 ㅤ
 <br/>
 **Features that are, at the time of writing, already added in:**
-- Validation mechanism during training. ( L1 MEL, mrSTFT, PESQ, SI-SDR )  ` In between epochs. `
+- Hold-Out type validation mechanism during training. ( L1 MEL, mrSTFT, PESQ, SI-SDR )  ` In between epochs. `
  
 - BF16-AMP, TF32, FP32 Training modes available.  ` BF16 & TF32 require Ampere or newer GPUs. `
 > NOTE: BF16 is used by default. If unsupported hardware detected, switched back to FP32. Inference is only in FP32.
@@ -55,7 +55,7 @@
 > - Ability to choose lr_decay from the ui.
  
 💡 Ideas / concepts 💡
-> - ~~Propably improving the mel-similarity.. or generally expanding the idea.~~ Irrelevant. Functionality taken over by validation mechanism.
+> - ~~Propably improving the mel-similarity.. or generally expanding the idea.~~ Irrelevant. Functionality taken over by hold-out validation mechanism.
 > - and more.. perhaps ..
  
  
