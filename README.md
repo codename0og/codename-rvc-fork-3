@@ -1,11 +1,11 @@
 # <p align="center">` Codename-RVC-Fork 🍇 3 ` </p>
 ## <p align="center">Based on Applio</p>
 
-<p align="center"> ㅤㅤ👇 You can join my RVC / Audio AI friendly server below 👇ㅤㅤ </p>
+<p align="center"> ㅤㅤ👇 You can join my discord server below ( RVC / AI Audio friendly ) 👇ㅤㅤ </p>
 
 </p>
 <p align="center">
-  > WIP < 🌐 RVC HUB</a>
+  <a href="https://discord.gg/SkwcMjxwMq" target="_blank"> Codename's Sanctuary</a>
 </p>
 
 
@@ -59,7 +59,7 @@
 > - and more.. perhaps ..
  
  
-### ~~❗ For contact, please use RVC HUB discord server ❗~~ WIP. For now use my discord: .codename0.
+### ❗ For contact, please join my discord server ❗
  
  
 ## Getting Started:
